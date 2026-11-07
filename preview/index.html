@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>定时任务中心 · 预览</title>
+<style>
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: #eef1f6;
+    color: #161616;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+    --text-primary: #161616;
+    --text-muted: #5c5c5c;
+    --border: rgba(0, 0, 0, 0.12);
+    --border-active: rgba(109, 74, 255, 0.5);
+    --background-muted: rgba(0, 0, 0, 0.04);
+    --background-elevated: #ffffff;
+    --interactive-accent: #6d4aff;
+  }
+  .sc-dialog {
+    display: none;
+  }
+  .mock-dialog {
+    width: min(760px, calc(100vw - 60px));
+    max-height: calc(100vh - 60px);
+    margin: 30px auto;
+    background: #fafafa;
+    border-radius: 10px;
+    box-shadow: 0 24px 80px rgba(15, 23, 42, 0.24), 0 0 0 .5px rgba(0,0,0,.12);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .mock-dialog-header {
+    height: 48px; flex: 0 0 48px; display: flex; align-items: center; padding: 0 16px;
+    font-size: 14px; font-weight: 600;
+    border-bottom: 1px solid rgba(0,0,0,.06);
+  }
+  .mock-dialog-content { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px; }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/main.tsx"></script>
+</body>
+</html>
