@@ -6,7 +6,7 @@ import type { ScheduleStore } from "../store"
 export function ScheduleDialog(props: { ctx: Context; store: ScheduleStore; onClose: () => void }) {
   const ui = props.ctx.ui
   return (
-    <ui.Dialog title="定时任务中心" size="x-large" closable>
+    <ui.Dialog title="定时任务" size="x-large" closable>
       <SchedulePage ctx={props.ctx} store={props.store} />
     </ui.Dialog>
   )

@@ -9,8 +9,8 @@ import { ScheduleStore } from "./store"
 export default Plugin.define({
   i18n: {
     en: {
-      title: "Schedule Center",
-      open: "Open Schedule Center",
+      title: "定时任务",
+      open: "打开定时任务",
     },
   },
   setup(ctx) {
@@ -43,8 +43,8 @@ export default Plugin.define({
 
     ctx.add(TitlebarItem, (): TitlebarItem => ({
       id: "schedules",
-      label: "定时",
-      title: "打开定时任务中心",
+      label: "定时任务",
+      title: "打开定时任务",
       icon: "task",
       run: open,
     }))
