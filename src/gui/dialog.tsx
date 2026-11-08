@@ -7,7 +7,7 @@ export function ScheduleDialog(props: { ctx: Context; store: ScheduleStore; onCl
   const ui = props.ctx.ui
   return (
     <ui.Dialog title="定时任务" size="x-large" closable>
-      <SchedulePage ctx={props.ctx} store={props.store} />
+      <SchedulePage ctx={props.ctx} store={props.store} embedded />
     </ui.Dialog>
   )
 }

@@ -9,19 +9,110 @@ export function installStyles(): void {
     style.id = CSS_ID
     document.head.appendChild(style)
   }
-  style.textContent = CSS_TEXT
+  style.textContent = CSS
 }
 
-const CSS_TEXT = `
-/* Schedule Center styles. Namespaced with sc- to avoid host collisions. */
+/** Component-scoped copy injected at the root of SchedulePage, like the other plugins. */
+export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to avoid host collisions. */
 
-.sc-page {
+.sc-root {
+  --sc-strong: var(--color-v2-text-text-contrast, var(--color-text-strong, currentColor));
+  --sc-muted: var(--color-v2-text-text-muted, var(--color-text-weak, color-mix(in srgb, currentColor 58%, transparent)));
+  --sc-faint: var(--color-v2-text-text-faint, color-mix(in srgb, currentColor 42%, transparent));
+  --sc-border: var(--color-v2-border-border-base, var(--color-border-weak-base, color-mix(in srgb, currentColor 12%, transparent)));
+  --sc-card: var(--color-v2-background-bg-base, var(--color-surface-base, #fff));
+  --sc-layer: var(--color-v2-background-bg-layer-01, #fafafa);
+  --sc-layer-2: var(--color-v2-background-bg-layer-02, #f2f2f2);
+  --sc-accent: #6d4aff;
+  --sc-accent-hover: #5b3be0;
+  --sc-blue: #3b82f6;
+  --sc-teal: #0ea5a4;
+  --sc-amber: #b45309;
+  --sc-red: #d92d20;
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 4px 0 36px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  color: var(--sc-strong);
   font-size: 13px;
-  color: var(--text-primary, inherit);
 }
+
+.sc-root *, .sc-root *::before, .sc-root *::after { box-sizing: border-box; }
+.sc-root button, .sc-root select, .sc-root input, .sc-root textarea { font: inherit; }
+
+/* hero */
+.sc-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  min-height: 112px;
+  padding: 16px 20px;
+  border: 1px solid var(--sc-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 190% at 0% 0%, color-mix(in srgb, var(--sc-accent) 14%, transparent) 0%, transparent 55%),
+    linear-gradient(115deg,
+      color-mix(in srgb, var(--sc-accent) 4%, var(--sc-card)) 0%,
+      color-mix(in srgb, var(--sc-accent) 3%, var(--sc-card)) 52%,
+      color-mix(in srgb, var(--sc-blue) 3%, var(--sc-card)) 100%);
+}
+.sc-hero::after {
+  content: "";
+  position: absolute;
+  right: 210px;
+  bottom: -60px;
+  width: 440px;
+  height: 160px;
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--sc-accent) 11%, transparent), transparent 68%);
+  pointer-events: none;
+}
+.sc-hero-copy { min-width: 0; position: relative; z-index: 1; }
+.sc-kicker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  color: var(--sc-accent);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.13em;
+}
+.sc-kicker svg { width: 13px; height: 13px; }
+.sc-hero-title {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--sc-strong);
+}
+.sc-sub { margin: 4px 0 0; color: var(--sc-muted); font-size: 11.5px; line-height: 1.5; }
+.sc-hero-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  color: var(--sc-faint);
+  font-size: 10.5px;
+  flex-wrap: wrap;
+}
+.sc-hero-meta b { color: var(--sc-muted); font-weight: 620; }
+.sc-hero-meta .sc-sep { width: 2px; height: 2px; }
+.sc-hero-tools {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.sc-root[data-embedded="true"] .sc-hero { min-height: 98px; }
 
 .sc-toolbar {
   display: flex;
@@ -33,7 +124,7 @@ const CSS_TEXT = `
 .sc-tabs {
   display: flex;
   gap: 2px;
-  background: var(--background-muted, rgba(128, 128, 128, 0.1));
+  background: var(--sc-layer, color-mix(in srgb, var(--sc-muted) 7%, transparent));
   border-radius: 8px;
   padding: 2px;
 }
@@ -41,7 +132,7 @@ const CSS_TEXT = `
 .sc-tab {
   border: none;
   background: transparent;
-  color: var(--text-muted, inherit);
+  color: var(--sc-muted);
   padding: 5px 12px;
   border-radius: 6px;
   cursor: pointer;
@@ -50,8 +141,8 @@ const CSS_TEXT = `
 }
 
 .sc-tab.active {
-  background: var(--background-elevated, rgba(128, 128, 128, 0.18));
-  color: var(--text-primary, inherit);
+  background: var(--sc-layer-2, color-mix(in srgb, var(--sc-muted) 10%, var(--sc-card)));
+  color: var(--sc-strong);
   font-weight: 500;
 }
 
@@ -62,30 +153,30 @@ const CSS_TEXT = `
 }
 
 .sc-card {
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.25));
+  border: 1px solid var(--sc-border);
   border-radius: 10px;
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  background: var(--background-elevated, transparent);
+  background: var(--sc-card);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   cursor: pointer;
   user-select: none;
 }
 
 .sc-card:focus-visible {
-  outline: 2px solid var(--interactive-accent, #6d4aff);
+  outline: 2px solid var(--sc-accent);
   outline-offset: 1px;
 }
 
 .sc-card:hover {
-  border-color: var(--border-active, rgba(109, 74, 255, 0.35));
+  border-color: var(--sc-accent);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
 .sc-card.expanded {
-  border-color: var(--border-active, rgba(109, 74, 255, 0.5));
+  border-color: var(--sc-accent);
 }
 
 .sc-card-head {
@@ -121,16 +212,21 @@ const CSS_TEXT = `
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  color: var(--text-muted, inherit);
+  color: var(--sc-muted);
   font-size: 12px;
 }
 
 .sc-sep {
-  opacity: 0.5;
+  display: inline-block;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
 }
 
 .sc-when {
-  color: var(--text-primary, inherit);
+  color: var(--sc-strong);
   font-weight: 500;
 }
 
@@ -167,7 +263,7 @@ const CSS_TEXT = `
 }
 
 .sc-detail {
-  border-top: 1px dashed var(--border, rgba(128, 128, 128, 0.25));
+  border-top: 1px dashed var(--sc-border);
   padding-top: 8px;
 }
 
@@ -179,7 +275,7 @@ const CSS_TEXT = `
 }
 
 .sc-detail-key {
-  color: var(--text-muted, inherit);
+  color: var(--sc-muted);
 }
 
 .sc-detail-value {
@@ -195,9 +291,9 @@ const CSS_TEXT = `
 }
 
 .sc-btn {
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
-  background: var(--background-elevated, transparent);
-  color: var(--text-primary, inherit);
+  border: 1px solid var(--sc-border);
+  background: var(--sc-card);
+  color: var(--sc-strong);
   border-radius: 8px;
   padding: 6px 14px;
   cursor: pointer;
@@ -207,7 +303,7 @@ const CSS_TEXT = `
 }
 
 .sc-btn:hover:not(:disabled) {
-  border-color: var(--border-active, rgba(109, 74, 255, 0.4));
+  border-color: var(--sc-accent);
 }
 
 .sc-btn:disabled {
@@ -216,20 +312,20 @@ const CSS_TEXT = `
 }
 
 .sc-btn-primary {
-  background: var(--interactive-accent, #6d4aff);
+  background: var(--sc-accent);
   border-color: transparent;
   color: #fff;
 }
 
 .sc-btn-primary:hover:not(:disabled) {
-  background: var(--interactive-accent-hover, #5b3be0);
+  background: var(--sc-accent-hover);
   border-color: transparent;
 }
 
 .sc-btn-ghost {
   border-color: transparent;
   background: transparent;
-  color: var(--text-muted, inherit);
+  color: var(--sc-muted);
 }
 
 .sc-btn-danger {
@@ -252,17 +348,17 @@ const CSS_TEXT = `
   display: flex;
   flex-direction: column;
   gap: 12px;
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.18));
+  border: 1px solid var(--sc-border);
   border-radius: 10px;
   padding: 12px 14px;
-  background: var(--background-muted, rgba(128, 128, 128, 0.04));
+  background: var(--sc-layer, color-mix(in srgb, var(--sc-muted) 4%, transparent));
 }
 
 .sc-section-title {
   margin: 0;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-muted, inherit);
+  color: var(--sc-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -279,7 +375,7 @@ const CSS_TEXT = `
   gap: 6px;
   border: none;
   background: none;
-  color: var(--text-muted, inherit);
+  color: var(--sc-muted);
   font-size: 12px;
   cursor: pointer;
   padding: 0;
@@ -287,7 +383,7 @@ const CSS_TEXT = `
 }
 
 .sc-advanced-toggle:hover {
-  color: var(--text-primary, inherit);
+  color: var(--sc-strong);
 }
 
 .sc-advanced-chevron {
@@ -327,15 +423,15 @@ const CSS_TEXT = `
 
 .sc-label {
   font-size: 12px;
-  color: var(--text-muted, inherit);
+  color: var(--sc-muted);
   font-weight: 500;
 }
 
 .sc-input {
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+  border: 1px solid var(--sc-border);
   border-radius: 8px;
-  background: var(--background-muted, transparent);
-  color: var(--text-primary, inherit);
+  background: var(--sc-layer, transparent);
+  color: var(--sc-strong);
   padding: 7px 10px;
   font-size: 13px;
   font-family: inherit;
@@ -345,7 +441,7 @@ const CSS_TEXT = `
 
 .sc-input:focus {
   outline: none;
-  border-color: var(--interactive-accent, #6d4aff);
+  border-color: var(--sc-accent);
 }
 
 .sc-textarea {
@@ -359,7 +455,7 @@ const CSS_TEXT = `
 .sc-segment {
   display: flex;
   gap: 2px;
-  background: var(--background-muted, rgba(128, 128, 128, 0.1));
+  background: var(--sc-layer, color-mix(in srgb, var(--sc-muted) 7%, transparent));
   border-radius: 8px;
   padding: 2px;
   width: fit-content;
@@ -368,7 +464,7 @@ const CSS_TEXT = `
 .sc-segment-item {
   border: none;
   background: transparent;
-  color: var(--text-muted, inherit);
+  color: var(--sc-muted);
   padding: 5px 14px;
   border-radius: 6px;
   cursor: pointer;
@@ -377,15 +473,15 @@ const CSS_TEXT = `
 }
 
 .sc-segment-item.active {
-  background: var(--background-elevated, rgba(128, 128, 128, 0.18));
-  color: var(--text-primary, inherit);
+  background: var(--sc-layer-2, color-mix(in srgb, var(--sc-muted) 10%, var(--sc-card)));
+  color: var(--sc-strong);
   font-weight: 500;
 }
 
 .sc-hint {
   margin: 0;
   font-size: 12px;
-  color: var(--text-muted, inherit);
+  color: var(--sc-muted);
 }
 
 .sc-hint-bad {
@@ -399,12 +495,12 @@ const CSS_TEXT = `
 }
 
 .sc-preview-chip {
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.25));
+  border: 1px solid var(--sc-border);
   border-radius: 6px;
   padding: 2px 8px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  background: var(--background-elevated, transparent);
+  background: var(--sc-card);
 }
 
 .sc-form-actions {
@@ -414,11 +510,11 @@ const CSS_TEXT = `
 }
 
 .sc-empty {
-  border: 1px dashed var(--border, rgba(128, 128, 128, 0.3));
+  border: 1px dashed var(--sc-border);
   border-radius: 10px;
   padding: 28px;
   text-align: center;
-  color: var(--text-muted, inherit);
+  color: var(--sc-muted);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -428,7 +524,7 @@ const CSS_TEXT = `
 .sc-empty-title {
   margin: 0;
   font-weight: 500;
-  color: var(--text-primary, inherit);
+  color: var(--sc-strong);
 }
 
 .sc-empty-hint {
@@ -464,7 +560,7 @@ const CSS_TEXT = `
   align-items: center;
   justify-content: space-between;
   padding-bottom: 10px;
-  border-bottom: 1px solid var(--border, rgba(128, 128, 128, 0.25));
+  border-bottom: 1px solid var(--sc-border);
 }
 
 .sc-dialog-title {
@@ -483,7 +579,7 @@ const CSS_TEXT = `
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: var(--text-muted, inherit);
+  color: var(--sc-muted);
   cursor: default;
   white-space: nowrap;
 }
