@@ -1,10 +1,15 @@
 {
   "name": "opencode-schedule-center",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Scheduled tasks dashboard for OpenCode: create, pause, resume and delete experimental schedules with countdowns and cron previews.",
   "type": "module",
   "license": "MIT",
   "author": "meiyx7",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meiyx7/opencode-schedule-center.git"
+  },
+  "homepage": "https://github.com/meiyx7/opencode-schedule-center#readme",
   "keywords": [
     "opencode",
     "opencode-plugin",
