@@ -105,7 +105,7 @@ export function relativeTime(at: number | undefined, now: number): string {
       if (parts.length === 2) break
     }
   }
-  const text = parts.join("") || "<1 秒"
+  const text = parts.join(" ") || "<1 秒"
   return diff > 0 ? `${text}后` : `${text}前`
 }
 
@@ -257,7 +257,8 @@ export function draftToWhen(draft: WhenDraft): ScheduleWhen {
 export function previewRuns(draft: WhenDraft, now: number, count = 5): number[] {
   if (draft.kind === "cron" && isValidCron(draft.cron)) return nextCronRuns(draft.cron, now, count)
   if (draft.kind === "in") {
-    const minutes = Number(draft.in)
+    // The form stores "30 minutes"; accept unit-less numbers too.
+    const minutes = Number.parseFloat(draft.in)
     return Number.isFinite(minutes) && minutes > 0 ? [now + minutes * 60_000] : []
   }
   if (draft.kind === "at") {
@@ -265,7 +266,7 @@ export function previewRuns(draft: WhenDraft, now: number, count = 5): number[] 
     return Number.isNaN(at) ? [] : [at]
   }
   if (draft.kind === "every") {
-    const minutes = Number(draft.every)
+    const minutes = Number.parseFloat(draft.every)
     if (!Number.isFinite(minutes) || minutes <= 0) return []
     return Array.from({ length: count }, (_, index) => now + (index + 1) * minutes * 60_000)
   }
