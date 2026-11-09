@@ -66,42 +66,44 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
       }}
       data-embedded={props.embedded ? "true" : undefined}
     >
-      <section class="sc-hero">
-        <div class="sc-hero-copy">
-          <div class="sc-kicker">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-              <circle cx="8" cy="8.5" r="5.5" />
-              <path d="M8 5.5v3l2 1.5" />
-              <path d="M6 1.5h4" />
-            </svg>
-            SCHEDULE CENTER
-          </div>
-          <Show when={!props.embedded}>
-            <h1 class="sc-hero-title">定时任务</h1>
-          </Show>
-          <p class="sc-sub">把重复的事交给 agent：到点唤醒会话执行提示词，支持 cron、条件与执行目录。</p>
-          <div class="sc-hero-meta">
-            <Show when={!loading()} fallback={<span>正在扫描会话…</span>}>
-              <span>
-                <b>{rows().filter((row) => row.schedule.status === "active").length}</b> 个进行中
-              </span>
-              <span class="sc-sep" />
-              <span>
-                <b>{rows().filter((row) => row.schedule.status === "paused").length}</b> 个已暂停
-              </span>
-              <span class="sc-sep" />
-              <span>
-                <b>{rows().length}</b> 个任务总计
-              </span>
+      <Show when={tab() === "list"}>
+        <section class="sc-hero">
+          <div class="sc-hero-copy">
+            <div class="sc-kicker">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <circle cx="8" cy="8.5" r="5.5" />
+                <path d="M8 5.5v3l2 1.5" />
+                <path d="M6 1.5h4" />
+              </svg>
+              SCHEDULE CENTER
+            </div>
+            <Show when={!props.embedded}>
+              <h1 class="sc-hero-title">定时任务</h1>
             </Show>
+            <p class="sc-sub">把重复的事交给 agent：到点唤醒会话执行提示词，支持 cron、条件与执行目录。</p>
+            <div class="sc-hero-meta">
+              <Show when={!loading()} fallback={<span>正在扫描会话…</span>}>
+                <span>
+                  <b>{rows().filter((row) => row.schedule.status === "active").length}</b> 个进行中
+                </span>
+                <span class="sc-sep" />
+                <span>
+                  <b>{rows().filter((row) => row.schedule.status === "paused").length}</b> 个已暂停
+                </span>
+                <span class="sc-sep" />
+                <span>
+                  <b>{rows().length}</b> 个任务总计
+                </span>
+              </Show>
+            </div>
           </div>
-        </div>
-        <div class="sc-hero-tools">
-          <button type="button" class="sc-btn sc-btn-primary" onClick={() => setTab("create")}>
-            新建任务
-          </button>
-        </div>
-      </section>
+          <div class="sc-hero-tools">
+            <button type="button" class="sc-btn sc-btn-primary" onClick={() => setTab("create")}>
+              新建任务
+            </button>
+          </div>
+        </section>
+      </Show>
 
       <div class="sc-toolbar">
         <div class="sc-tabs">
@@ -112,9 +114,11 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
             新建任务
           </button>
         </div>
-        <button type="button" class="sc-btn sc-btn-ghost" disabled={loading()} onClick={() => void load()}>
-          {loading() ? "刷新中…" : "刷新"}
-        </button>
+        <Show when={tab() === "list"}>
+          <button type="button" class="sc-btn sc-btn-ghost" disabled={loading()} onClick={() => void load()}>
+            {loading() ? "刷新中…" : "刷新"}
+          </button>
+        </Show>
       </div>
 
       <Show when={error()}>

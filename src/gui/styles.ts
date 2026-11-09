@@ -341,16 +341,16 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 .sc-form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .sc-section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   border: 1px solid var(--sc-border);
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 11px 14px;
   background: var(--sc-layer, color-mix(in srgb, var(--sc-muted) 4%, transparent));
 }
 
@@ -419,6 +419,107 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   display: flex;
   flex-direction: column;
   gap: 5px;
+  min-width: 0;
+}
+
+/* Trigger row: the kind segment and the timing inputs share one line. */
+.sc-trigger-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 16px;
+}
+
+.sc-trigger-field {
+  flex: 1 1 260px;
+  min-width: 200px;
+  max-width: 340px;
+}
+
+.sc-trigger-times {
+  flex: 0 0 150px;
+  min-width: 130px;
+}
+
+.sc-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  align-items: start;
+}
+
+.sc-span-2 {
+  grid-column: 1 / -1;
+}
+
+.sc-input-suffix {
+  position: relative;
+}
+
+.sc-input-suffix .sc-input {
+  padding-right: 46px;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.sc-input-suffix .sc-input::-webkit-inner-spin-button,
+.sc-input-suffix .sc-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.sc-suffix {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--sc-muted);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.sc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sc-chip {
+  border: 1px solid var(--sc-border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  background: var(--sc-card);
+  color: var(--sc-muted);
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 16px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.sc-chip:hover {
+  border-color: var(--sc-accent);
+  color: var(--sc-strong);
+}
+
+.sc-chip.active {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--sc-accent) 14%, transparent);
+  color: var(--sc-accent);
+  font-weight: 600;
+}
+
+.sc-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sc-counter {
+  color: var(--sc-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .sc-label {
@@ -530,10 +631,6 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   font-size: 12px;
 }
 
-.sc-variant {
-  margin-top: 2px;
-}
-
 .sc-model-summary {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
@@ -596,9 +693,26 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 }
 
 .sc-form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  padding: 10px 0 2px;
+  border-top: 1px solid var(--sc-border);
+  background: var(--sc-card);
+}
+
+.sc-form-status {
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  color: var(--sc-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sc-empty {
@@ -678,5 +792,24 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 
 .sc-pill-next {
   font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 680px) {
+  .sc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sc-span-2 {
+    grid-column: auto;
+  }
+
+  .sc-trigger-field,
+  .sc-trigger-times {
+    flex: 1 1 100%;
+  }
+
+  .sc-form-status {
+    display: none;
+  }
 }
 `
