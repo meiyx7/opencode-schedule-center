@@ -1,7 +1,8 @@
 import { createMemo, createSignal, For, onMount, Show } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
-import type { ScheduleRow, WhenDraft } from "../types"
+import type { ModelProviderGroup, ScheduleRow, WhenDraft } from "../types"
 import { clockText, isValidCron, outcomeLabel, previewRuns, relativeTime } from "./format"
+import { Combobox, type ComboOption } from "./combobox"
 import type { ScheduleStore } from "../store"
 
 const WHEN_KINDS: Array<{ id: WhenDraft["kind"]; label: string }> = [
@@ -11,22 +12,17 @@ const WHEN_KINDS: Array<{ id: WhenDraft["kind"]; label: string }> = [
   { id: "cron", label: "Cron" },
 ]
 
-interface ModelOption {
-  key: string
-  label: string
-  id: string
-  providerID: string
-  variant?: string
-}
-
 export function ScheduleForm(props: {
   ctx: Context
   store: ScheduleStore
   onCreated: () => void
   onCancel: () => void
 }) {
-  const [models, setModels] = createSignal<ModelOption[]>([])
+  const [providers, setProviders] = createSignal<ModelProviderGroup[]>([])
+  const [providerID, setProviderID] = createSignal("")
   const [modelKey, setModelKey] = createSignal("")
+  const [variant, setVariant] = createSignal("")
+  const [modelHint, setModelHint] = createSignal("")
   const [agents, setAgents] = createSignal<Array<{ name: string; description?: string }>>([])
   const [agent, setAgent] = createSignal("")
   const [directories, setDirectories] = createSignal<string[]>([])
@@ -44,33 +40,51 @@ export function ScheduleForm(props: {
   const [error, setError] = createSignal("")
 
   onMount(async () => {
-    const [modelResponse, agentList, directoryList] = await Promise.allSettled([
-      props.store.api.model.list({ types: ["chat"] }),
+    const [catalog, agentList, directoryList] = await Promise.allSettled([
+      props.store.modelCatalog(),
       props.store.primaryAgents(),
       props.store.recentDirectories(),
     ])
-    if (modelResponse.status === "fulfilled") {
-      const raw = (modelResponse.value.data ?? modelResponse.value) as Array<{
-        providerID: string
-        id: string
-        name?: string
-        status?: string
-        enabled?: boolean
-      }>
-      setModels(
-        raw
-          .filter((model) => model.status === "active" && model.enabled !== false)
-          .map((model) => ({
-            key: `${model.providerID}/${model.id}`,
-            label: model.name || model.id,
-            id: model.id,
-            providerID: model.providerID,
-          })),
-      )
-    }
+    if (catalog.status === "fulfilled") setProviders(catalog.value)
+    else setModelHint("模型列表加载失败，将使用会话默认模型")
     if (agentList.status === "fulfilled") setAgents(agentList.value)
     if (directoryList.status === "fulfilled") setDirectories(directoryList.value)
   })
+
+  const providerOptions = createMemo<ComboOption[]>(() => [
+    { value: "", label: "默认模型（跟随会话）", note: "不指定" },
+    ...providers().map((provider) => ({
+      value: provider.id,
+      label: provider.name,
+      note: provider.id === provider.name ? undefined : provider.id,
+      keywords: `${provider.id} ${provider.models.map((model) => model.name).join(" ")}`,
+    })),
+  ])
+
+  const currentProvider = createMemo(() => providers().find((provider) => provider.id === providerID()))
+  const modelOptions = createMemo<ComboOption[]>(() =>
+    (currentProvider()?.models ?? []).map((model) => ({
+      value: model.key,
+      label: model.name,
+      note: model.id === model.name ? model.modelID : model.id,
+      badge: model.status === "active" ? undefined : model.status,
+      keywords: `${model.modelID} ${model.id}`,
+    })),
+  )
+  const selectedModel = createMemo(() => currentProvider()?.models.find((model) => model.key === modelKey()))
+  const variants = createMemo(() => selectedModel()?.variants ?? [])
+
+  function selectProvider(value: string) {
+    setProviderID(value)
+    setModelKey("")
+    setVariant("")
+  }
+
+  function selectModel(value: string) {
+    setModelKey(value)
+    const next = currentProvider()?.models.find((model) => model.key === value)
+    if (!next || !next.variants.includes(variant())) setVariant("")
+  }
 
   const [kind, setKind] = useStateKind()
   const draft = createMemo<WhenDraft | null>(() => {
@@ -97,7 +111,7 @@ export function ScheduleForm(props: {
     setError("")
     try {
       const ends = kind() === "in" || kind() === "at" ? undefined : endsWith()
-      const selected = models().find((model) => model.key === modelKey())
+      const selected = selectedModel()
       const dir = directory().trim()
       await props.store.createSchedule({
         sessionID: "",
@@ -105,7 +119,15 @@ export function ScheduleForm(props: {
         when: draft()!,
         prompt: prompt().trim(),
         ...(endsWith() ? { ends: ends! } : {}),
-        ...(selected ? { model: { id: selected.id, providerID: selected.providerID } } : {}),
+        ...(selected
+          ? {
+              model: {
+                id: selected.id,
+                providerID: selected.providerID,
+                ...(variant() ? { variant: variant() } : {}),
+              },
+            }
+          : {}),
         ...(agent() ? { agent: agent() } : {}),
         ...(dir ? { directory: dir } : {}),
       })
@@ -290,18 +312,52 @@ export function ScheduleForm(props: {
         <Show when={advanced()}>
           <div class="sc-advanced">
             <div class="sc-field">
-              <label class="sc-label" for="sc-model">
-                模型 <span class="sc-label-note">默认使用会话默认模型</span>
+              <label class="sc-label" for="sc-provider">
+                Provider <span class="sc-label-note">先选 Provider，再选模型</span>
               </label>
-              <select
+              <Combobox
+                id="sc-provider"
+                value={providerID()}
+                options={providerOptions()}
+                placeholder="搜索 Provider 或模型名"
+                emptyText="没有匹配的 Provider"
+                onSelect={selectProvider}
+              />
+            </div>
+
+            <div class="sc-field">
+              <label class="sc-label" for="sc-model">
+                模型 <span class="sc-label-note">{providerID() ? "可输入关键字搜索" : "留空使用会话默认模型"}</span>
+              </label>
+              <Combobox
                 id="sc-model"
-                class="sc-input"
                 value={modelKey()}
-                onChange={(event) => setModelKey(event.currentTarget.value)}
-              >
-                <option value="">默认模型</option>
-                <For each={models()}>{(model) => <option value={model.key}>{model.label}</option>}</For>
-              </select>
+                options={modelOptions()}
+                disabled={!providerID()}
+                placeholder={providerID() ? "搜索模型（名称或 ID）" : "请先选择 Provider"}
+                emptyText="没有匹配的模型"
+                onSelect={selectModel}
+              />
+              <Show when={variants().length > 0}>
+                <select
+                  class="sc-input sc-variant"
+                  value={variant()}
+                  onChange={(event) => setVariant(event.currentTarget.value)}
+                  aria-label="模型变体"
+                >
+                  <option value="">默认变体</option>
+                  <For each={variants()}>{(id) => <option value={id}>{id}</option>}</For>
+                </select>
+              </Show>
+              <Show when={selectedModel()}>
+                <p class="sc-hint sc-model-summary">
+                  {selectedModel()!.providerID} / {selectedModel()!.id}
+                  <Show when={selectedModel()!.status !== "active"}>（{selectedModel()!.status}）</Show>
+                </p>
+              </Show>
+              <Show when={modelHint()}>
+                <p class="sc-hint sc-hint-bad">{modelHint()}</p>
+              </Show>
             </div>
 
             <Show when={agents().length > 0}>

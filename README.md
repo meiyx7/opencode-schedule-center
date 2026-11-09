@@ -6,6 +6,7 @@ OpenCode Desktop 的 GUI 插件：可视化查看、创建、暂停、恢复和�
 
 - **任务列表**：扫描全部会话，聚合并展示所有定时任务；状态徽章（进行中/已暂停/已结束）、下次触发倒计时（每秒刷新）、上次触发结果（已触发/延迟/失败…）
 - **新建任务**：四种触发方式（延迟 `in` / 定时 `at` / 间隔 `every` / cron 表达式），实时校验 cron 格式、预览未来 5 次触发时间、可选最多触发次数
+- **选择模型**：高级选项里按「Provider → 模型」级联选择，两级都支持关键字搜索，重名模型会带上所属 Provider / 模型 ID 便于区分，并可选模型变体；留空则跟随会话默认模型
 - **管理操作**：暂停 / 恢复 / 删除，展开卡片查看详情（绑定会话、提示词、触发次数、创建时间）
 - **入口**：设置页（Settings → 定时任务）、标题栏「定时任务」按钮、命令面板 ⌘⇧P 搜「定时任务」、快捷键 ⌘⌥S
 
@@ -43,6 +44,7 @@ npm run typecheck
 
 - **数据源**：`client.experimental.schedule.{list,create,pause,resume,delete}`（官方 client SDK）。API 的 `list` 按会话过滤且必填 `sessionID`，因此面板分页扫全部会话后逐会话聚合，按「进行中 → 已暂停 → 已结束、下次触发时间」排序。
 - **挂载会话**：任务必须绑定真实会话；新建任务时自动创建一个专用会话（标题「定时任务：xxx」）作为唤醒目标，创建失败会回滚删除该会话。
+- **模型选择**：`model.list` 拉取 chat 模型后按 `providerID` 分组，Provider 名称取自 `provider.list`；创建会话时把 `{ providerID, id, variant }` 传给 `session.create`，若宿主返回的会话模型与所选不一致，再调用 `session.switchModel` 兜底，确保任务按所选模型唤醒。
 - **cron 预览**：内置 5 字段 cron 解析器（支持 `*/n`、区间、逗号、星期日的 0/7 双写法、dom/dow 标准 OR 语义），用于格式校验、人性化描述（「工作日 09:00」）和未来触发时间预览。
 - **构建**：`@opencode/plugin/gui/vite` preset 产出单文件 CommonJS 到 `dist/gui-experimental.cjs`；`solid-js` 与 `@opencode/plugin/gui` 由宿主提供，不打包。
 

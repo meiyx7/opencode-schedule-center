@@ -1,5 +1,5 @@
-import type { OpenCodeClient } from "@opencode/client/promise"
-import type { CreateDraft, ScheduleInfo, ScheduleRow, SessionInfo, WhenDraft } from "./types"
+import type { ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode/client/promise"
+import type { CreateDraft, ModelChoice, ModelProviderGroup, ScheduleInfo, ScheduleRow, SessionInfo, WhenDraft } from "./types"
 
 /**
  * The schedule API filters every list call by sessionID, so the panel sweeps
@@ -62,6 +62,47 @@ export class ScheduleStore {
     return batches
   }
 
+  /**
+   * Chat models grouped by provider, so the form can offer provider → model
+   * cascading with search. Beta models stay selectable; deprecated ones do not.
+   */
+  async modelCatalog(): Promise<ModelProviderGroup[]> {
+    const [modelResponse, providerResponse] = await Promise.allSettled([
+      this.client.model.list({ types: ["chat"] }),
+      this.client.provider.list(),
+    ])
+    if (modelResponse.status === "rejected") throw modelResponse.reason
+
+    const providerNames = new Map<string, string>()
+    if (providerResponse.status === "fulfilled") {
+      const list = (providerResponse.value.data ?? providerResponse.value) as ProviderInfo[]
+      for (const provider of list) providerNames.set(provider.id, provider.name || provider.id)
+    }
+
+    const models = (modelResponse.value.data ?? modelResponse.value) as ModelInfo[]
+    const groups = new Map<string, ModelProviderGroup>()
+    for (const model of models) {
+      if (model.enabled === false || model.status === "deprecated") continue
+      let group = groups.get(model.providerID)
+      if (!group) {
+        group = {
+          id: model.providerID,
+          name: providerNames.get(model.providerID) || model.providerID,
+          models: [],
+        }
+        groups.set(model.providerID, group)
+      }
+      group.models.push(toModelChoice(model))
+    }
+
+    const result = [...groups.values()]
+    for (const group of result) {
+      group.models.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+    }
+    result.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+    return result
+  }
+
   /** Create a dedicated mount session so the schedule has a home to wake. */
   async createSchedule(draft: CreateDraft): Promise<ScheduleInfo> {
     const session = await this.client.session.create({
@@ -70,6 +111,11 @@ export class ScheduleStore {
       ...(draft.agent ? { agent: draft.agent } : {}),
       ...(draft.directory ? { location: { directory: draft.directory } } : {}),
     })
+    if (draft.model && !sameModel(session.model, draft.model)) {
+      // Some hosts ignore `model` on create; switch explicitly so the picked
+      // model is what the schedule will wake with.
+      await this.client.session.switchModel({ sessionID: session.id, model: draft.model }).catch(() => undefined)
+    }
     try {
       const when: WhenDraft = draft.when
       const response = await this.client.experimental.schedule.create({
@@ -134,4 +180,29 @@ export class ScheduleStore {
   async remove(scheduleID: string): Promise<void> {
     await this.client.experimental.schedule.delete({ scheduleID })
   }
+}
+
+function toModelChoice(model: ModelInfo): ModelChoice {
+  return {
+    key: `${model.providerID}/${model.id}`,
+    id: model.id,
+    modelID: model.modelID || model.id,
+    providerID: model.providerID,
+    name: model.name?.trim() || model.id,
+    status: model.status ?? "active",
+    variants: (model.variants ?? []).map((variant) => variant.id).filter((id) => id !== "none"),
+  }
+}
+
+/** Whether a session already runs the picked model (and variant). */
+function sameModel(
+  current: { id: string; providerID: string; variant?: string } | undefined,
+  picked: { id: string; providerID: string; variant?: string },
+): boolean {
+  return (
+    current !== undefined &&
+    current.id === picked.id &&
+    current.providerID === picked.providerID &&
+    (current.variant ?? "") === (picked.variant ?? "")
+  )
 }

@@ -448,6 +448,98 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   resize: vertical;
 }
 
+/* Searchable provider / model picker. */
+.sc-combo {
+  position: relative;
+}
+
+.sc-combo-input {
+  padding-right: 10px;
+}
+
+.sc-combo-list {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 216px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--sc-border);
+  border-radius: 8px;
+  background: var(--sc-card);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+}
+
+.sc-combo-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sc-combo-option.active {
+  background: color-mix(in srgb, var(--sc-accent) 12%, transparent);
+}
+
+.sc-combo-option[aria-selected="true"] .sc-combo-option-label {
+  color: var(--sc-accent);
+  font-weight: 600;
+}
+
+.sc-combo-option-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-combo-option-note {
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--sc-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-combo-option-badge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 0 6px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.sc-combo-empty {
+  padding: 8px;
+  color: var(--sc-muted);
+  font-size: 12px;
+}
+
+.sc-variant {
+  margin-top: 2px;
+}
+
+.sc-model-summary {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .sc-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }

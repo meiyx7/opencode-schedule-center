@@ -70,3 +70,25 @@ export interface CreateDraft {
   directory?: string
   agent?: string
 }
+
+/** One selectable model, flattened from the API's ModelInfo. */
+export interface ModelChoice {
+  /** `${providerID}/${id}`, unique across providers. */
+  key: string
+  /** The model id a session's ModelRef expects. */
+  id: string
+  /** The provider-facing id, useful when it differs from the display id. */
+  modelID: string
+  providerID: string
+  name: string
+  status: string
+  /** Variant ids the model exposes; empty when it has none. */
+  variants: string[]
+}
+
+/** Models grouped by provider so the picker can cascade provider → model. */
+export interface ModelProviderGroup {
+  id: string
+  name: string
+  models: ModelChoice[]
+}
