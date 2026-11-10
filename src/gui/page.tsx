@@ -1,4 +1,4 @@
-import { createSignal, For, Show } from "solid-js"
+import { createSignal, createMemo, For, onCleanup, Show } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
 import type { ScheduleRow } from "../types"
 import { clockText, describeWhen, outcomeLabel, relativeTime } from "./format"
@@ -7,6 +7,14 @@ import { CSS } from "./styles"
 import type { ScheduleStore } from "../store"
 
 type Tab = "list" | "create"
+type Filter = "active" | "paused" | "done" | "all"
+
+const FILTERS: Array<{ id: Filter; label: string }> = [
+  { id: "active", label: "进行中" },
+  { id: "paused", label: "已暂停" },
+  { id: "done", label: "已结束" },
+  { id: "all", label: "全部" },
+]
 
 export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedded?: boolean }) {
   const ctx = props.ctx
@@ -16,6 +24,8 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   const [error, setError] = createSignal("")
   const [expanded, setExpanded] = createSignal<string>("")
   const [busyId, setBusyId] = createSignal("")
+  const [filter, setFilter] = createSignal<Filter>("active")
+  const [confirming, setConfirming] = createSignal<string>("")
   const [nowTick, setNowTick] = createSignal(0)
 
   // One shared ticking clock drives every countdown on the page.
@@ -23,8 +33,8 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
     void nowTick()
     return Date.now()
   }
-  let timer: ReturnType<typeof setInterval> | undefined
-  timer = setInterval(() => setNowTick((value) => value + 1), 1000)
+  const timer = setInterval(() => setNowTick((value) => value + 1), 1000)
+  onCleanup(() => clearInterval(timer))
 
   const load = async () => {
     setLoading(true)
@@ -52,8 +62,32 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusyId("")
+      setConfirming("")
     }
   }
+
+  // Half-written create form, reported back by ScheduleForm via onDirtyChange.
+  const [formDirty, setFormDirty] = createSignal(false)
+
+  const switchTab = (next: Tab) => {
+    // Leaving a half-written create form deserves a beat of friction.
+    if (tab() === "create" && next === "list" && formDirty()) {
+      if (!window.confirm("提示词还没提交，返回列表将丢弃已填写的内容。确定返回？")) return
+    }
+    setTab(next)
+  }
+
+  const counts = createMemo(() => ({
+    active: rows().filter((row) => row.schedule.status === "active").length,
+    paused: rows().filter((row) => row.schedule.status === "paused").length,
+    done: rows().filter((row) => row.schedule.status === "done").length,
+    all: rows().length,
+  }))
+
+  const visibleRows = createMemo(() => {
+    const current = filter()
+    return rows().filter((row) => (current === "all" ? true : row.schedule.status === current))
+  })
 
   return (
     <div
@@ -98,7 +132,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
             </div>
           </div>
           <div class="sc-hero-tools">
-            <button type="button" class="sc-btn sc-btn-primary" onClick={() => setTab("create")}>
+            <button type="button" class="sc-btn sc-btn-primary" onClick={() => switchTab("create")}>
               新建任务
             </button>
           </div>
@@ -107,10 +141,10 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
 
       <div class="sc-toolbar">
         <div class="sc-tabs">
-          <button type="button" class="sc-tab" classList={{ active: tab() === "list" }} onClick={() => setTab("list")}>
+          <button type="button" class="sc-tab" classList={{ active: tab() === "list" }} onClick={() => switchTab("list")}>
             任务列表{rows().length > 0 ? `（${rows().length}）` : ""}
           </button>
-          <button type="button" class="sc-tab" classList={{ active: tab() === "create" }} onClick={() => setTab("create")}>
+          <button type="button" class="sc-tab" classList={{ active: tab() === "create" }} onClick={() => switchTab("create")}>
             新建任务
           </button>
         </div>
@@ -127,7 +161,19 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
 
       <Show
         when={tab() === "list"}
-        fallback={<ScheduleForm ctx={ctx} store={props.store} onCreated={() => { setTab("list"); void load() }} onCancel={() => setTab("list")} />}
+        fallback={
+          <ScheduleForm
+            ctx={ctx}
+            store={props.store}
+            onDirtyChange={setFormDirty}
+            onCreated={() => {
+              setFormDirty(false)
+              setTab("list")
+              void load()
+            }}
+            onCancel={() => switchTab("list")}
+          />
+        }
       >
         <Show
           when={!loading() || rows().length > 0}
@@ -137,7 +183,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                 <>
                   <p class="sc-empty-title">还没有定时任务</p>
                   <p class="sc-empty-hint">创建一个任务，让 agent 定时替你巡检、汇报、提醒</p>
-                  <button type="button" class="sc-btn sc-btn-primary" onClick={() => setTab("create")}>
+                  <button type="button" class="sc-btn sc-btn-primary" onClick={() => switchTab("create")}>
                     新建第一个任务
                   </button>
                 </>
@@ -145,12 +191,44 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
             </div>
           }
         >
-          <div class="sc-list">
-            <For each={rows()}>
+          <div class="sc-filters" role="tablist" aria-label="任务筛选">
+            <For each={FILTERS}>
+              {(item) => (
+                <Show when={item.id === "all" || counts()[item.id] > 0}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={filter() === item.id}
+                    class="sc-filter"
+                    classList={{ active: filter() === item.id }}
+                    onClick={() => setFilter(item.id)}
+                  >
+                    {item.label}
+                    <span class="sc-filter-count">{counts()[item.id]}</span>
+                  </button>
+                </Show>
+              )}
+            </For>
+          </div>
+
+          <Show
+            when={visibleRows().length > 0}
+            fallback={
+              <div class="sc-empty sc-empty-slim">
+                <p class="sc-empty-title">没有{FILTERS.find((item) => item.id === filter())?.label}的任务</p>
+                <button type="button" class="sc-btn" onClick={() => setFilter("all")}>
+                  查看全部
+                </button>
+              </div>
+            }
+          >
+            <div class="sc-list">
+              <For each={visibleRows()}>
               {(row) => (
                 <div
                   class="sc-card"
                   classList={{ expanded: expanded() === row.schedule.id }}
+                  data-schedule={row.schedule.id}
                   role="button"
                   tabIndex="0"
                   aria-expanded={expanded() === row.schedule.id}
@@ -199,13 +277,27 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                       <button
                         type="button"
                         class="sc-btn sc-btn-small sc-btn-danger"
+                        classList={{ "confirm-armed": confirming() === row.schedule.id }}
                         disabled={busyId() === row.schedule.id}
+                        title="删除任务及其挂载会话"
                         onClick={(event) => {
                           event.stopPropagation()
-                          void act(row, "delete")
+                          if (confirming() === row.schedule.id) {
+                            void act(row, "delete")
+                          } else {
+                            // Two clicks, no modal: first arms, clicking elsewhere disarms.
+                            setConfirming(row.schedule.id)
+                            const scheduleID = row.schedule.id
+                            const disarm = (click: Event) => {
+                              const target = click.target as HTMLElement
+                              if (!target.closest?.(`[data-schedule="${scheduleID}"]`)) setConfirming("")
+                              document.removeEventListener("click", disarm, true)
+                            }
+                            document.addEventListener("click", disarm, true)
+                          }
                         }}
                       >
-                        删除
+                        {confirming() === row.schedule.id ? "确认删除" : "删除"}
                       </button>
                     </div>
                   </div>
@@ -239,8 +331,9 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                   </Show>
                 </div>
               )}
-            </For>
-          </div>
+              </For>
+            </div>
+          </Show>
         </Show>
       </Show>
     </div>

@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Match, onMount, Show, Switch } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
 import type { ModelProviderGroup, ScheduleRow, ScheduleWhen, WhenDraft } from "../types"
 import { clockText, describeWhen, isValidCron, outcomeLabel, previewRuns, relativeTime } from "./format"
@@ -109,6 +109,7 @@ function Icon(props: { name: IconName }) {
 export function ScheduleForm(props: {
   ctx: Context
   store: ScheduleStore
+  onDirtyChange?: (dirty: boolean) => void
   onCreated: () => void
   onCancel: () => void
 }) {
@@ -199,6 +200,22 @@ export function ScheduleForm(props: {
 
   const previews = createMemo(() => (draft() ? previewRuns(draft()!, Date.now(), 5) : []))
 
+  // The preview card ticks: countdowns stay honest while the form sits open.
+  const [tick, setTick] = createSignal(0)
+  let clock: ReturnType<typeof setInterval> | undefined
+  onMount(() => {
+    clock = setInterval(() => setTick((value) => value + 1), 1000)
+    onCleanup(() => clearInterval(clock))
+  })
+  const now = () => {
+    void tick()
+    return Date.now()
+  }
+  const previewRunsLive = createMemo(() => {
+    void tick()
+    return previews()
+  })
+
   const submit = async () => {
     if (!draft()) return
     setBusy(true)
@@ -236,6 +253,21 @@ export function ScheduleForm(props: {
   function endsWith(): { times: number } | undefined {
     const value = Number(times())
     return Number.isInteger(value) && value > 0 ? { times: value } : undefined
+  }
+
+  /** Step the max-runs input; an empty value starts at 5 so "−" has a base. */
+  function stepTimes(delta: number) {
+    const current = Number(times())
+    const next = Number.isInteger(current) && current > 0 ? current + delta : 5
+    setTimes(String(Math.max(1, next)))
+  }
+
+  /** Step a minute field with adaptive increments (1 below 60, 15 up to 240, 60 beyond). */
+  function stepMinutes(value: () => string, set: (value: string) => void, delta: number) {
+    const current = Number(value())
+    const base = Number.isFinite(current) && current > 0 ? current : delta > 0 ? 0 : 2
+    const stepSize = base >= 240 ? 60 : base >= 60 ? 15 : 1
+    set(String(Math.max(1, base + delta * stepSize)))
   }
 
   const invalidCron = () => kind() === "cron" && cron().trim().length > 0 && !isValidCron(cron())
@@ -284,21 +316,34 @@ export function ScheduleForm(props: {
 
   const statusText = () => {
     if (draftWhen() === null) return "触发时间无效，请检查设置"
-    const first = previews()[0]
+    const first = previewRunsLive()[0]
     if (prompt().trim().length === 0) return "填写提示词后即可创建"
-    return first ? `将于 ${clockText(first)} 首次触发` : draftSummary()
+    return first ? `将于 ${clockText(first)} 首次触发（${relativeTime(first, now())}）` : draftSummary()
   }
 
+  // Report progress so the page can confirm before discarding a half-written form.
+  const dirty = createMemo(() => prompt().trim().length > 0 || name().trim().length > 0 || providerID() !== "")
+  createEffect(() => props.onDirtyChange?.(dirty()))
+
   return (
-    <div
-      class="sc-form"
-      onKeyDown={(event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && canSubmit()) {
-          event.preventDefault()
-          void submit()
-        }
-      }}
-    >
+      <div
+        class="sc-form"
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && canSubmit()) {
+            event.preventDefault()
+            void submit()
+          }
+          // Escape outside a combobox: close an open advanced panel, else leave the form.
+          if (event.key === "Escape" && !event.defaultPrevented) {
+            if (advanced()) {
+              event.preventDefault()
+              setAdvanced(false)
+            } else {
+              props.onCancel()
+            }
+          }
+        }}
+      >
       <div class="sc-field sc-name-field">
         <label class="sc-label" for="sc-name">
           任务名称 <span class="sc-label-note">可选 · 留空时用提示词开头</span>
@@ -356,6 +401,14 @@ export function ScheduleForm(props: {
                     onInput={(event) => setInMinutes(event.currentTarget.value)}
                   />
                   <span class="sc-unit">分钟</span>
+                  <div class="sc-scrollers">
+                    <button type="button" tabIndex={-1} aria-label="减少" onClick={() => stepMinutes(inMinutes, setInMinutes, -1)}>
+                      −
+                    </button>
+                    <button type="button" tabIndex={-1} aria-label="增加" onClick={() => stepMinutes(inMinutes, setInMinutes, 1)}>
+                      +
+                    </button>
+                  </div>
                 </div>
                 <div class="sc-presets">
                   <For each={MINUTE_PRESETS}>
@@ -412,6 +465,14 @@ export function ScheduleForm(props: {
                     onInput={(event) => setEveryMinutes(event.currentTarget.value)}
                   />
                   <span class="sc-unit">分钟</span>
+                  <div class="sc-scrollers">
+                    <button type="button" tabIndex={-1} aria-label="减少" onClick={() => stepMinutes(everyMinutes, setEveryMinutes, -1)}>
+                      −
+                    </button>
+                    <button type="button" tabIndex={-1} aria-label="增加" onClick={() => stepMinutes(everyMinutes, setEveryMinutes, 1)}>
+                      +
+                    </button>
+                  </div>
                 </div>
                 <div class="sc-presets">
                   <For each={MINUTE_PRESETS}>
@@ -469,28 +530,51 @@ export function ScheduleForm(props: {
               <Icon name="clock" />
               <span>接下来</span>
             </div>
-            <Show when={previews().length > 0} fallback={<div class="sc-next-empty">触发时间无效</div>}>
+            <Show when={previewRunsLive().length > 0} fallback={<div class="sc-next-empty">触发时间无效</div>}>
               <div class="sc-next-primary">
-                <b>{clockText(previews()[0])}</b>
-                <em>{relativeTime(previews()[0], Date.now())}</em>
+                <b>{clockText(previewRunsLive()[0])}</b>
+                <em>{relativeTime(previewRunsLive()[0], now())}</em>
               </div>
               <div class="sc-next-more">
-                <For each={previews().slice(1, 3)}>{(at) => <span class="sc-next-chip">{clockText(at)}</span>}</For>
+                <For each={previewRunsLive().slice(1, 3)}>
+                  {(at) => <span class="sc-next-chip">{clockText(at)}</span>}
+                </For>
               </div>
             </Show>
             <Show when={kind() === "every" || kind() === "cron"}>
               <div class="sc-limit">
                 <span>最多</span>
-                <input
-                  id="sc-times"
-                  class="sc-input"
-                  type="number"
-                  min="1"
-                  placeholder="不限"
-                  aria-label="最多触发次数"
-                  value={times()}
-                  onInput={(event) => setTimes(event.currentTarget.value)}
-                />
+                <div class="sc-stepper">
+                  <button
+                    type="button"
+                    class="sc-step"
+                    aria-label="减少"
+                    tabIndex={-1}
+                    disabled={times().trim().length === 0}
+                    onClick={() => stepTimes(-1)}
+                  >
+                    −
+                  </button>
+                  <input
+                    id="sc-times"
+                    class="sc-input"
+                    type="number"
+                    min="1"
+                    placeholder="不限"
+                    aria-label="最多触发次数"
+                    value={times()}
+                    onInput={(event) => setTimes(event.currentTarget.value)}
+                  />
+                  <button
+                    type="button"
+                    class="sc-step"
+                    aria-label="增加"
+                    tabIndex={-1}
+                    onClick={() => stepTimes(1)}
+                  >
+                    +
+                  </button>
+                </div>
                 <span>次</span>
               </div>
               <Show when={invalidTimes()}>

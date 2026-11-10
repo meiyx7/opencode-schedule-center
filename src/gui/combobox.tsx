@@ -81,11 +81,25 @@ export function Combobox(props: {
     setActive(-1)
   }
 
-  function choose(option: ComboOption) {
+  function choose(option: ComboOption | undefined) {
+    // Nothing highlighted (e.g. plain Enter): just close.
+    if (!option) {
+      closeList()
+      return
+    }
     props.onSelect(option.value)
     setOpen(false)
     setDraft(option.label)
     setActive(-1)
+  }
+
+  /** Clear the selection; falls through to the host's empty value if it has one. */
+  function clear() {
+    const empty = props.options.find((option) => option.value === "")
+    setOpen(false)
+    setDraft(empty?.label ?? "")
+    setActive(-1)
+    if (empty) props.onSelect(empty.value)
   }
 
   function move(delta: number) {
@@ -115,17 +129,33 @@ export function Combobox(props: {
       else openList()
       return
     }
+    if (event.key === "Home" && open()) {
+      event.preventDefault()
+      if (filtered().length > 0) setActive(0)
+      return
+    }
+    if (event.key === "End" && open()) {
+      event.preventDefault()
+      if (filtered().length > 0) setActive(filtered().length - 1)
+      return
+    }
     if (event.key === "Enter") {
-      const option = open() ? filtered()[active()] : undefined
-      if (option) {
+      if (open()) {
         event.preventDefault()
-        choose(option)
+        choose(filtered()[active()])
       }
       return
     }
-    if (event.key === "Escape" && open()) {
-      event.preventDefault()
-      closeList()
+    if (event.key === "Escape") {
+      if (open()) {
+        event.preventDefault()
+        event.stopPropagation()
+        closeList()
+      } else if (props.value !== "") {
+        event.preventDefault()
+        event.stopPropagation()
+        clear()
+      }
     }
   }
 
@@ -137,8 +167,10 @@ export function Combobox(props: {
     node?.scrollIntoView({ block: "nearest" })
   })
 
+  const clearable = () => props.value !== "" && props.options.some((option) => option.value === "")
+
   return (
-    <div class="sc-combo" ref={root}>
+    <div class="sc-combo" classList={{ open: open() }} ref={root}>
       <input
         id={props.id}
         ref={input}
@@ -172,12 +204,27 @@ export function Combobox(props: {
           }, 0)
         }}
       />
+      <Show when={clearable() && !props.disabled}>
+        <button
+          type="button"
+          class="sc-combo-clear"
+          aria-label="清除选择"
+          tabIndex={-1}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={clear}
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+            <path d="M5 5l6 6M11 5l-6 6" />
+          </svg>
+        </button>
+      </Show>
       <Show when={open()}>
         <div class="sc-combo-list" role="listbox" ref={list}>
           <Show
             when={filtered().length > 0}
             fallback={<div class="sc-combo-empty">{props.emptyText ?? "没有匹配项"}</div>}
           >
+            <div class="sc-combo-count">{filtered().length} 项</div>
             <For each={filtered()}>
               {(option, index) => (
                 <button
@@ -190,6 +237,11 @@ export function Combobox(props: {
                   onMouseEnter={() => setActive(index())}
                   onClick={() => choose(option)}
                 >
+                  <span class="sc-combo-check" aria-hidden="true">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M3.4 8.6l3 3 6.2-7" />
+                    </svg>
+                  </span>
                   <span class="sc-combo-option-label">{option.label}</span>
                   <Show when={option.note}>
                     <span class="sc-combo-option-note">{option.note}</span>

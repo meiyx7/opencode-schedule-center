@@ -511,7 +511,7 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 
 .sc-duration .sc-input {
   height: 36px;
-  padding: 0 46px 0 12px;
+  padding: 0 60px 0 12px;
   font-size: 14px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -527,7 +527,7 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 
 .sc-unit {
   position: absolute;
-  right: 12px;
+  right: 44px;
   top: 50%;
   transform: translateY(-50%);
   color: var(--sc-muted);
@@ -886,8 +886,49 @@ select.sc-input {
   position: relative;
 }
 
+.sc-combo-option[aria-selected="true"] .sc-combo-option-label {
+  color: var(--sc-accent);
+  font-weight: 600;
+}
+
 .sc-combo-input {
-  padding-right: 10px;
+  padding-right: 26px;
+}
+
+.sc-combo.open .sc-combo-input {
+  border-color: var(--sc-accent);
+  background: var(--sc-card);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sc-accent) 15%, transparent);
+}
+
+/* Clear affordance floats inside the input. */
+.sc-combo-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--sc-faint);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sc-combo-clear:hover {
+  background: var(--sc-layer-2, rgba(128, 128, 128, 0.14));
+  color: var(--sc-strong);
+}
+
+.sc-combo-clear svg {
+  width: 10px;
+  height: 10px;
 }
 
 .sc-combo-list {
@@ -896,19 +937,27 @@ select.sc-input {
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  max-height: 216px;
+  max-height: 240px;
   overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--sc-border);
   border-radius: 10px;
   background: var(--sc-card);
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.2), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  animation: sc-panel-in 0.14s ease;
+}
+
+.sc-combo-count {
+  padding: 3px 8px 4px;
+  color: var(--sc-faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
 }
 
 .sc-combo-option {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   width: 100%;
   padding: 6px 8px;
   border: none;
@@ -918,6 +967,26 @@ select.sc-input {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.sc-combo-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--sc-accent);
+  opacity: 0;
+}
+
+.sc-combo-check svg {
+  width: 11px;
+  height: 11px;
+}
+
+.sc-combo-option[aria-selected="true"] .sc-combo-check {
+  opacity: 1;
 }
 
 .sc-combo-option.active {
@@ -1022,6 +1091,182 @@ select.sc-input {
   display: flex;
   flex: 0 0 auto;
   gap: 8px;
+}
+
+/* Status filter tabs on the list page. */
+.sc-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sc-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--sc-border);
+  border-radius: 999px;
+  background: var(--sc-card);
+  color: var(--sc-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.sc-filter:hover {
+  border-color: color-mix(in srgb, var(--sc-accent) 45%, transparent);
+  color: var(--sc-strong);
+}
+
+.sc-filter.active {
+  border-color: transparent;
+  background: var(--sc-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.sc-filter-count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--sc-layer-2, rgba(128, 128, 128, 0.14));
+  color: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-filter.active .sc-filter-count {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.sc-empty-slim {
+  padding: 20px;
+  flex-direction: row;
+  justify-content: center;
+}
+
+.sc-empty-slim .sc-empty-title {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--sc-muted);
+}
+
+/* Compact ± steppers for numeric inputs. */
+.sc-scrollers {
+  position: absolute;
+  right: 3px;
+  top: 4px;
+  bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.sc-scrollers button {
+  flex: 1;
+  width: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--sc-faint);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sc-scrollers button:hover {
+  background: var(--sc-layer-2, rgba(128, 128, 128, 0.14));
+  color: var(--sc-strong);
+}
+
+/* The limit stepper lives inline in the preview card. */
+.sc-stepper {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--sc-border);
+  border-radius: 7px;
+  background: var(--sc-card);
+  overflow: hidden;
+}
+
+.sc-stepper .sc-input {
+  width: 44px;
+  height: 24px;
+  border: none;
+  border-radius: 0;
+  padding: 0 4px;
+  text-align: center;
+  font-size: 12px;
+  background: transparent;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.sc-stepper .sc-input:focus {
+  box-shadow: none;
+  background: transparent;
+}
+
+.sc-stepper .sc-input::-webkit-inner-spin-button,
+.sc-stepper .sc-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.sc-step {
+  width: 20px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--sc-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.sc-step:hover:not(:disabled) {
+  background: var(--sc-layer-2, rgba(128, 128, 128, 0.12));
+  color: var(--sc-strong);
+}
+
+.sc-step:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Armed delete: pulse gently so the second click is obvious. */
+.sc-confirm-btn,
+.sc-btn-danger.sc-btn-small {
+  min-width: 64px;
+}
+
+@keyframes sc-confirm-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.18);
+  }
+}
+
+.sc-btn-danger.sc-btn-small:not(:disabled) {
+  animation: none;
+}
+
+.sc-btn-danger.sc-btn-small.confirm-armed {
+  animation: sc-confirm-pulse 1.2s ease infinite;
 }
 
 .sc-empty {
