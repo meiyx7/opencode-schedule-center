@@ -41,6 +41,19 @@ npm run dev        # vite build --watch，改完即重载
 npm run typecheck
 ```
 
+## 发布
+
+版本发布只通过 GitHub Actions（`.github/workflows/publish.yml`）；本地 `npm publish` 已被 `prepublishOnly` 守卫禁止：
+
+```sh
+npm version patch   # 或 minor / major：自动改版本、提交并打 v* tag
+git push --follow-tags origin main
+```
+
+CI 会校验 tag 与 `package.json` 版本一致，随后构建并发布到 npm。
+
+> 本包在 npm 侧开启了 staged publishing：OIDC 信任发布后版本会在暂存区停留约 3–5 分钟才转正到 `latest`，属正常现象；如需即时上架，可在 npm 包设置中关闭 staged publishing 或改用 `NPM_TOKEN` 直发。
+
 ## 实现说明
 
 - **数据源**：`client.experimental.schedule.{list,create,pause,resume,delete}`（官方 client SDK）。API 的 `list` 按会话过滤且必填 `sessionID`，因此面板分页扫全部会话后逐会话聚合，按「进行中 → 已暂停 → 已结束、下次触发时间」排序。模型 / Agent / 目录不在 schedule 上而是挂在绑定会话上，列表每次加载会刷新会话缓存，从会话读取这些高级选项展示在卡片上。
