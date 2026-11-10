@@ -305,6 +305,10 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 .sc-detail {
   border-top: 1px dashed var(--sc-border);
   padding-top: 8px;
+  /* The card disables selection for click-to-expand; the detail re-enables it
+     so historical values can be selected and copied. */
+  user-select: text;
+  cursor: default;
 }
 
 .sc-detail-grid {
@@ -324,10 +328,58 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   display: flex;
   align-items: center;
   gap: 6px;
+  user-select: text;
+}
+
+.sc-detail-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
 }
 
 .sc-prompt-text {
+  align-items: flex-start;
+}
+
+.sc-prompt-text .sc-detail-text {
   white-space: pre-wrap;
+}
+
+/* One-click copy affordance inside a detail value. */
+.sc-copy {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sc-faint);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.sc-copy:hover {
+  background: var(--sc-layer-2, color-mix(in srgb, var(--sc-muted) 8%, transparent));
+  color: var(--sc-strong);
+}
+
+.sc-copy:focus-visible {
+  outline: 2px solid var(--sc-accent);
+  outline-offset: 1px;
+}
+
+.sc-copy.copied {
+  color: #14b8a6;
+}
+
+.sc-copy svg {
+  width: 13px;
+  height: 13px;
 }
 
 .sc-btn {

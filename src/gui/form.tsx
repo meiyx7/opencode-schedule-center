@@ -833,6 +833,69 @@ export function ScheduleConfig(props: { session?: SessionInfo }) {
   )
 }
 
+/** Write text to the clipboard, falling back to a hidden textarea when the
+ *  async Clipboard API is unavailable (non-secure contexts). */
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return
+  } catch {
+    // fall through to the legacy path
+  }
+  const area = document.createElement("textarea")
+  area.value = text
+  area.setAttribute("readonly", "")
+  area.style.position = "fixed"
+  area.style.opacity = "0"
+  document.body.appendChild(area)
+  area.select()
+  try {
+    document.execCommand("copy")
+  } finally {
+    document.body.removeChild(area)
+  }
+}
+
+/** One-click copy with a brief "copied" confirmation. */
+function CopyButton(props: { text: string; label: string }) {
+  const [copied, setCopied] = createSignal(false)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  onCleanup(() => clearTimeout(timer))
+  const copy = (event: MouseEvent) => {
+    event.stopPropagation()
+    void copyText(props.text).then(() => {
+      setCopied(true)
+      clearTimeout(timer)
+      timer = setTimeout(() => setCopied(false), 1200)
+    })
+  }
+  return (
+    <button
+      type="button"
+      class="sc-copy"
+      classList={{ copied: copied() }}
+      title={copied() ? "已复制" : `复制${props.label}`}
+      aria-label={copied() ? "已复制" : `复制${props.label}`}
+      onClick={copy}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <Show
+        when={copied()}
+        fallback={
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="5.4" y="5.4" width="8" height="8" rx="1.5" />
+            <path d="M10.6 3.4v-.2A1.2 1.2 0 0 0 9.4 2H3.2A1.2 1.2 0 0 0 2 3.2v6.2a1.2 1.2 0 0 0 1.2 1.2h.2" />
+          </svg>
+        }
+      >
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3.4 8.6l3 3 6.2-7" />
+        </svg>
+      </Show>
+    </button>
+  )
+}
+
 export function ScheduleDetail(props: { row: ScheduleRow; now: number }) {
   const { schedule } = props.row
   const outcome = outcomeLabel(schedule.lastOutcome)
@@ -840,15 +903,23 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number }) {
   const agent = props.row.session?.agent?.trim() ?? ""
   const directory = props.row.session?.location?.directory ?? props.row.session?.directory ?? ""
   return (
-    <div class="sc-detail">
+    <div
+      class="sc-detail"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
       <div class="sc-detail-grid">
         <span class="sc-detail-key">绑定会话</span>
         <span class="sc-detail-value" title={props.row.sessionTitle}>
-          {props.row.sessionTitle}
+          <span class="sc-detail-text">{props.row.sessionTitle}</span>
+          <CopyButton text={props.row.sessionTitle} label="会话" />
         </span>
         <Show when={model}>
           <span class="sc-detail-key">模型</span>
-          <span class="sc-detail-value sc-mono">{model}</span>
+          <span class="sc-detail-value sc-mono">
+            <span class="sc-detail-text">{model}</span>
+            <CopyButton text={model} label="模型" />
+          </span>
         </Show>
         <Show when={agent}>
           <span class="sc-detail-key">Agent</span>
@@ -856,10 +927,16 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number }) {
         </Show>
         <Show when={directory}>
           <span class="sc-detail-key">执行目录</span>
-          <span class="sc-detail-value sc-mono">{directory}</span>
+          <span class="sc-detail-value sc-mono">
+            <span class="sc-detail-text">{directory}</span>
+            <CopyButton text={directory} label="目录" />
+          </span>
         </Show>
         <span class="sc-detail-key">提示词</span>
-        <span class="sc-detail-value sc-prompt-text">{schedule.action.prompt}</span>
+        <span class="sc-detail-value sc-prompt-text">
+          <span class="sc-detail-text">{schedule.action.prompt}</span>
+          <CopyButton text={schedule.action.prompt} label="提示词" />
+        </span>
         <span class="sc-detail-key">已触发</span>
         <span class="sc-detail-value">
           {schedule.runCount} 次
