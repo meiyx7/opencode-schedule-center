@@ -34,7 +34,9 @@ export class ScheduleStore {
 
   /** Fetch schedules for every known session and return active-first rows. */
   async listAll(): Promise<ScheduleRow[]> {
-    if (this.sessions.size === 0) await this.refreshSessions()
+    // Refresh so the advanced options shown on each card (model / agent /
+    // directory) reflect the session's current picks, not a stale cache.
+    await this.refreshSessions()
     const ids = [...this.sessions.keys()]
     const batches: ScheduleRow[] = []
     const chunkSize = 20
@@ -43,9 +45,11 @@ export class ScheduleStore {
       const results = await Promise.allSettled(
         chunk.map(async (sessionID) => {
           const schedules = await this.client.experimental.schedule.list({ sessionID })
+          const session = this.sessions.get(sessionID)
           return schedules.map((schedule): ScheduleRow => ({
             schedule,
-            sessionTitle: this.sessions.get(sessionID)?.title ?? sessionID,
+            sessionTitle: session?.title ?? sessionID,
+            session,
           }))
         }),
       )
@@ -134,7 +138,7 @@ export class ScheduleStore {
         },
         ...(draft.ends ? { ends: draft.ends } : {}),
       })
-      this.sessions.set(session.id, { id: session.id, title: session.title })
+      this.sessions.set(session.id, { ...session, ...(draft.model ? { model: draft.model } : {}) })
       return response
     } catch (error) {
       // The mount session is useless without its schedule; drop it again.

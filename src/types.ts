@@ -40,6 +40,13 @@ export interface ScheduleInfo {
   time: { created: number; updated: number }
 }
 
+/** A session's model pick, mirroring the API's ModelRef. */
+export interface SessionModelRef {
+  id: string
+  providerID: string
+  variant?: string
+}
+
 export interface SessionInfo {
   id: string
   title?: string
@@ -47,11 +54,17 @@ export interface SessionInfo {
   projectID?: string
   location?: { directory?: string }
   time?: { created?: number; updated?: number }
+  /** The model the session wakes with; set in the create form's advanced options. */
+  model?: SessionModelRef
+  /** The primary agent the session runs as. */
+  agent?: string
 }
 
 export interface ScheduleRow {
   schedule: ScheduleInfo
   sessionTitle: string
+  /** The bound session, source of the advanced options (model / agent / directory). */
+  session?: SessionInfo
 }
 
 export type WhenDraft =

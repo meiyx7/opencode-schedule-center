@@ -113,6 +113,8 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   flex: 0 0 auto;
 }
 .sc-root[data-embedded="true"] .sc-hero { min-height: 98px; }
+/* In the dialog the form should spend the height on content, not chrome. */
+.sc-root[data-embedded="true"] { padding: 0 0 4px; gap: 10px; }
 
 .sc-toolbar {
   display: flex;
@@ -228,6 +230,44 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 .sc-when {
   color: var(--sc-strong);
   font-weight: 500;
+}
+
+/* Advanced options (model / agent / directory) shown on each card. */
+.sc-config {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sc-config-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--sc-border) 70%, transparent);
+  border-radius: 999px;
+  background: var(--sc-layer, color-mix(in srgb, var(--sc-muted) 4%, transparent));
+  color: var(--sc-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.sc-config-chip svg {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  opacity: 0.75;
+}
+
+.sc-config-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
 }
 
 .sc-badge {
@@ -353,6 +393,37 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   flex-direction: column;
   gap: 14px;
   width: 100%;
+  container-type: inline-size;
+  container-name: scform;
+}
+
+/* The form body is a single column by default and folds into two columns on a
+   wide container (the dialog / settings page): trigger on the left, prompt +
+   advanced on the right. This spends the dialog's width instead of its height,
+   so the whole form fits without scrolling. */
+.sc-form-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+@container scform (min-width: 700px) {
+  .sc-form-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "name    name"
+      "trigger exec"
+      "error   error";
+    gap: 14px;
+    align-items: start;
+  }
+
+  .sc-form-body .sc-name-field { grid-area: name; }
+  .sc-form-body .sc-trigger-section { grid-area: trigger; }
+  .sc-form-body .sc-exec-section { grid-area: exec; }
+  .sc-form-body .sc-form-error { grid-area: error; }
 }
 
 /* Name is a title-style field, not another boxed row. */
@@ -455,15 +526,29 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 0 0 0.5px color-mix(in srgb, var(--sc-border) 60%, transparent);
 }
 
-/* Contextual panel under the segmented control. */
+/* Contextual panel under the segmented control. It is its own container so the
+   controls + next-run preview sit side by side only when there is room, and
+   stack when the panel lands in a narrow (two-column form) column. */
 .sc-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 224px;
-  gap: 14px;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--sc-border) 70%, transparent);
   border-radius: 11px;
   background: var(--sc-layer, color-mix(in srgb, var(--sc-muted) 4%, transparent));
+  container-type: inline-size;
+  container-name: scpanel;
+}
+
+.sc-panel-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+@container scpanel (min-width: 520px) {
+  .sc-panel-grid {
+    grid-template-columns: minmax(0, 1fr) 224px;
+    gap: 14px;
+  }
 }
 
 .sc-panel-main {
@@ -806,6 +891,19 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   border-radius: 10px;
   background: var(--sc-layer, color-mix(in srgb, var(--sc-muted) 4%, transparent));
   animation: sc-panel-in 0.18s ease;
+  container-type: inline-size;
+  container-name: scadv;
+}
+
+/* In a narrow column the advanced fields stack instead of squeezing two-up. */
+@container scadv (max-width: 480px) {
+  .sc-advanced .sc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sc-advanced .sc-span-2 {
+    grid-column: auto;
+  }
 }
 
 @keyframes sc-panel-in {

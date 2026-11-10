@@ -276,3 +276,18 @@ export function previewRuns(draft: WhenDraft, now: number, count = 5): number[] 
 export function scheduleTitle(schedule: ScheduleInfo): string {
   return schedule.name?.trim() || schedule.action.prompt.slice(0, 32) || schedule.id
 }
+
+/** Compact label for a session's model pick, e.g. "anthropic/claude-sonnet-5-5 (high)". */
+export function modelRefLabel(model: { id: string; providerID: string; variant?: string } | undefined): string {
+  if (!model) return ""
+  const base = `${model.providerID}/${model.id}`
+  return model.variant ? `${base} · ${model.variant}` : base
+}
+
+/** Last path segment of a directory, for compact display; full path goes in the tooltip. */
+export function dirName(directory: string | undefined): string {
+  if (!directory) return ""
+  const trimmed = directory.replace(/\/+$/, "")
+  const index = trimmed.lastIndexOf("/")
+  return index >= 0 ? trimmed.slice(index + 1) || trimmed : trimmed
+}

@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
-import type { ModelProviderGroup, ScheduleRow, ScheduleWhen, WhenDraft } from "../types"
-import { clockText, describeWhen, isValidCron, outcomeLabel, previewRuns, relativeTime } from "./format"
+import type { ModelProviderGroup, ScheduleRow, ScheduleWhen, SessionInfo, WhenDraft } from "../types"
+import { clockText, describeWhen, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime } from "./format"
 import { Combobox, type ComboOption } from "./combobox"
 import type { ScheduleStore } from "../store"
 
@@ -344,6 +344,7 @@ export function ScheduleForm(props: {
           }
         }}
       >
+      <div class="sc-form-body">
       <div class="sc-field sc-name-field">
         <label class="sc-label" for="sc-name">
           任务名称 <span class="sc-label-note">可选 · 留空时用提示词开头</span>
@@ -357,7 +358,7 @@ export function ScheduleForm(props: {
         />
       </div>
 
-      <section class="sc-section">
+      <section class="sc-section sc-trigger-section">
         <div class="sc-section-head">
           <span class="sc-mark" />
           <h3 class="sc-section-title">触发</h3>
@@ -382,6 +383,7 @@ export function ScheduleForm(props: {
         </div>
 
         <div class="sc-panel">
+          <div class="sc-panel-grid">
           <div class="sc-panel-main">
             <div class="sc-panel-head">
               <span class="sc-panel-label">{panelLabel()}</span>
@@ -582,10 +584,11 @@ export function ScheduleForm(props: {
               </Show>
             </Show>
           </aside>
+          </div>
         </div>
       </section>
 
-      <section class="sc-section">
+      <section class="sc-section sc-exec-section">
         <div class="sc-section-head">
           <span class="sc-mark" />
           <h3 class="sc-section-title">执行</h3>
@@ -750,8 +753,9 @@ export function ScheduleForm(props: {
       </section>
 
       <Show when={error()}>
-        <p class="sc-hint sc-hint-bad">{error()}</p>
+        <p class="sc-hint sc-hint-bad sc-form-error">{error()}</p>
       </Show>
+      </div>
 
       <div class="sc-form-actions">
         <div class="sc-form-status">
@@ -790,9 +794,51 @@ function defaultAt(): string {
   return localInput(new Date(Date.now() + 60 * 60_000))
 }
 
+/** Compact chips for the advanced options a task was created with (model / agent / directory). */
+export function ScheduleConfig(props: { session?: SessionInfo }) {
+  const model = () => modelRefLabel(props.session?.model)
+  const agent = () => props.session?.agent?.trim() ?? ""
+  const directory = () => props.session?.location?.directory ?? props.session?.directory ?? ""
+  return (
+    <Show when={model() || agent() || directory()}>
+      <div class="sc-config">
+        <Show when={model()}>
+          <span class="sc-config-chip" title={`模型 · ${model()}`}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="4" y="4" width="8" height="8" rx="1.5" />
+              <path d="M6.5 1.8v2M9.5 1.8v2M6.5 12.2v2M9.5 12.2v2M1.8 6.5h2M1.8 9.5h2M12.2 6.5h2M12.2 9.5h2" />
+            </svg>
+            <span class="sc-config-text">{model()}</span>
+          </span>
+        </Show>
+        <Show when={agent()}>
+          <span class="sc-config-chip" title={`Agent · ${agent()}`}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="8" cy="5.2" r="2.6" />
+              <path d="M2.8 13.6a5.2 5.2 0 0 1 10.4 0" />
+            </svg>
+            <span class="sc-config-text">{agent()}</span>
+          </span>
+        </Show>
+        <Show when={directory()}>
+          <span class="sc-config-chip" title={`执行目录 · ${directory()}`}>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 4.2A1.2 1.2 0 0 1 3.2 3h3l1.4 1.6h5.2A1.2 1.2 0 0 1 14 5.8v6A1.2 1.2 0 0 1 12.8 13H3.2A1.2 1.2 0 0 1 2 11.8z" />
+            </svg>
+            <span class="sc-config-text">{dirName(directory())}</span>
+          </span>
+        </Show>
+      </div>
+    </Show>
+  )
+}
+
 export function ScheduleDetail(props: { row: ScheduleRow; now: number }) {
   const { schedule } = props.row
   const outcome = outcomeLabel(schedule.lastOutcome)
+  const model = modelRefLabel(props.row.session?.model)
+  const agent = props.row.session?.agent?.trim() ?? ""
+  const directory = props.row.session?.location?.directory ?? props.row.session?.directory ?? ""
   return (
     <div class="sc-detail">
       <div class="sc-detail-grid">
@@ -800,6 +846,18 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number }) {
         <span class="sc-detail-value" title={props.row.sessionTitle}>
           {props.row.sessionTitle}
         </span>
+        <Show when={model}>
+          <span class="sc-detail-key">模型</span>
+          <span class="sc-detail-value sc-mono">{model}</span>
+        </Show>
+        <Show when={agent}>
+          <span class="sc-detail-key">Agent</span>
+          <span class="sc-detail-value">{agent}</span>
+        </Show>
+        <Show when={directory}>
+          <span class="sc-detail-key">执行目录</span>
+          <span class="sc-detail-value sc-mono">{directory}</span>
+        </Show>
         <span class="sc-detail-key">提示词</span>
         <span class="sc-detail-value sc-prompt-text">{schedule.action.prompt}</span>
         <span class="sc-detail-key">已触发</span>

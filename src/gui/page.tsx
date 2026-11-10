@@ -2,7 +2,7 @@ import { createSignal, createMemo, For, onCleanup, Show } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
 import type { ScheduleRow } from "../types"
 import { clockText, describeWhen, outcomeLabel, relativeTime } from "./format"
-import { ScheduleDetail, ScheduleForm } from "./form"
+import { ScheduleConfig, ScheduleDetail, ScheduleForm } from "./form"
 import { CSS } from "./styles"
 import type { ScheduleStore } from "../store"
 
@@ -24,7 +24,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   const [error, setError] = createSignal("")
   const [expanded, setExpanded] = createSignal<string>("")
   const [busyId, setBusyId] = createSignal("")
-  const [filter, setFilter] = createSignal<Filter>("active")
+  const [filter, setFilter] = createSignal<Filter>("all")
   const [confirming, setConfirming] = createSignal<string>("")
   const [nowTick, setNowTick] = createSignal(0)
 
@@ -326,6 +326,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                       )}
                     </Show>
                   </div>
+                  <ScheduleConfig session={row.session} />
                   <Show when={expanded() === row.schedule.id}>
                     <ScheduleDetail row={row} now={now()} />
                   </Show>

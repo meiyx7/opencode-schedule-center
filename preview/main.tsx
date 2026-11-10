@@ -80,6 +80,11 @@ const rows: ScheduleRow[] = [
 
 const live = rows.filter((row) => row.schedule.status !== "done")
 
+// Give each demo task its own session so the advanced-option chips vary.
+rows.forEach((row, index) => {
+  row.schedule.sessionID = `ses_demo_${index}`
+})
+
 const demoSessions = rows.map((row, index) => ({
   id: row.schedule.sessionID ?? `ses_demo_${index}`,
   title: row.sessionTitle,
@@ -193,6 +198,10 @@ const ctx = {
           id: session.id,
           title: session.title,
           location: { directory: ["/Users/meiyx/workspace/esop_workbuddy", "/Users/meiyx/workspace/esop_workbuddy_api", "/Users/meiyx/workspace/others/ext-new"][index % 3] },
+          model: index % 2 === 0
+            ? { providerID: "anthropic", id: "claude-sonnet-5-5", variant: index === 0 ? "high" : undefined }
+            : { providerID: "zcode", id: "GLM-5.3-Flash" },
+          agent: index % 3 === 0 ? "Build" : index % 3 === 1 ? "Plan" : undefined,
         })),
         cursor: {},
       }),
