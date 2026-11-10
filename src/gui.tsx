@@ -1,9 +1,7 @@
 import { Command, Plugin, SettingsPage, TitlebarItem } from "@opencode/plugin/gui"
-import { createEffect } from "solid-js"
 import { ScheduleDialog } from "./gui/dialog"
 import { SchedulePage } from "./gui/page"
 import { installStyles } from "./gui/styles"
-import { createSessionStatus } from "./gui/widgets"
 import { ScheduleStore } from "./store"
 
 export default Plugin.define({
@@ -60,12 +58,5 @@ export default Plugin.define({
       featured: true,
       run: open,
     }))
-
-    // Keep the current session's schedule status fresh for future pills/badges.
-    const status = createSessionStatus(store)
-    createEffect(() => {
-      const session = ctx.sessions.current()
-      if (session) void status.refresh(session.id)
-    })
   },
 })

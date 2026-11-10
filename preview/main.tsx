@@ -109,16 +109,31 @@ const ctx = {
         // The store queries per session; return that session's rows only.
         list: async (input: { sessionID: string }) =>
           rows.filter((row) => row.schedule.sessionID === input.sessionID).map((row) => row.schedule),
-        create: async () => rows[0].schedule,
+        create: async (input: { sessionID: string; prompt: string; name?: string }) => {
+          const schedule: ScheduleRow["schedule"] = {
+            id: "sch_created_" + Math.random().toString(36).slice(2, 8),
+            sessionID: input.sessionID,
+            name: input.name,
+            when: { type: "in", in: "30 minutes", tz: "Asia/Shanghai" },
+            tz: "Asia/Shanghai",
+            action: { type: "prompt", prompt: input.prompt },
+            status: "active",
+            runCount: 0,
+            time: { created: Date.now(), updated: Date.now() },
+            nextDueAt: Date.now() + 30 * 60_000,
+          }
+          rows.push({ sessionTitle: input.name ?? "定时任务", schedule })
+          return schedule
+        },
         pause: async (input: { scheduleID: string }) => {
           const row = rows.find((row) => row.schedule.id === input.scheduleID)
           if (row) row.schedule.status = "paused"
-          return rows[0].schedule
+          return rows.find((row) => row.schedule.id === input.scheduleID)!.schedule
         },
         resume: async (input: { scheduleID: string }) => {
           const row = rows.find((row) => row.schedule.id === input.scheduleID)
           if (row) row.schedule.status = "active"
-          return rows[0].schedule
+          return rows.find((row) => row.schedule.id === input.scheduleID)!.schedule
         },
         delete: async () => undefined,
       },
@@ -194,15 +209,13 @@ const ctx = {
     },
     session: {
       list: async () => ({
-        data: demoSessions.map((session, index) => ({
-          id: session.id,
-          title: session.title,
-          location: { directory: ["/Users/meiyx/workspace/esop_workbuddy", "/Users/meiyx/workspace/esop_workbuddy_api", "/Users/meiyx/workspace/others/ext-new"][index % 3] },
-          model: index % 2 === 0
-            ? { providerID: "anthropic", id: "claude-sonnet-5-5", variant: index === 0 ? "high" : undefined }
-            : { providerID: "zcode", id: "GLM-5.3-Flash" },
-          agent: index % 3 === 0 ? "Build" : index % 3 === 1 ? "Plan" : undefined,
-        })),
+        // Derive from rows so created mount sessions show up in sweeps too.
+        data: [...demoSessions, ...rows
+          .filter((row) => !demoSessions.some((session) => session.id === row.schedule.sessionID))
+          .map((row, index) => ({
+            id: row.schedule.sessionID ?? `ses_extra_${index}`,
+            title: row.sessionTitle,
+          }))],
         cursor: {},
       }),
       create: async () => ({ id: "ses_new", title: "定时任务：新任务" }),

@@ -5,9 +5,16 @@ import type { CreateDraft, ModelChoice, ModelProviderGroup, ScheduleInfo, Schedu
  * The schedule API filters every list call by sessionID, so the panel sweeps
  * the session list and merges per-session results. Sessions rarely exceed a
  * few hundred rows, and the sweep runs on demand, not on an interval.
+ *
+ * Results are cached: pause/resume/delete patch the cache instead of re-sweeping
+ * every session, so follow-up renders are instant and the network sees one call.
  */
 export class ScheduleStore {
   private sessions = new Map<string, SessionInfo>()
+  /** Per-session schedule lists from the last sweep, keyed by sessionID. */
+  private scheduleCache = new Map<string, ScheduleInfo[]>()
+  /** Cached model catalog; one fetch per dialog lifetime is enough. */
+  private catalog: ModelProviderGroup[] | undefined
 
   constructor(private readonly client: OpenCodeClient) {}
 
@@ -34,43 +41,78 @@ export class ScheduleStore {
 
   /** Fetch schedules for every known session and return active-first rows. */
   async listAll(): Promise<ScheduleRow[]> {
-    // Refresh so the advanced options shown on each card (model / agent /
-    // directory) reflect the session's current picks, not a stale cache.
     await this.refreshSessions()
     const ids = [...this.sessions.keys()]
-    const batches: ScheduleRow[] = []
+    this.scheduleCache.clear()
+    const rows: ScheduleRow[] = []
     const chunkSize = 20
     for (let start = 0; start < ids.length; start += chunkSize) {
       const chunk = ids.slice(start, start + chunkSize)
       const results = await Promise.allSettled(
         chunk.map(async (sessionID) => {
           const schedules = await this.client.experimental.schedule.list({ sessionID })
-          const session = this.sessions.get(sessionID)
-          return schedules.map((schedule): ScheduleRow => ({
-            schedule,
-            sessionTitle: session?.title ?? sessionID,
-            session,
-          }))
+          return { sessionID, schedules }
         }),
       )
       for (const result of results) {
-        if (result.status === "fulfilled") batches.push(...result.value)
+        if (result.status !== "fulfilled") continue
+        const { sessionID, schedules } = result.value
+        this.scheduleCache.set(sessionID, schedules)
+        const session = this.sessions.get(sessionID)
+        for (const schedule of schedules) {
+          rows.push({
+            schedule,
+            sessionTitle: session?.title ?? sessionID,
+            session,
+          })
+        }
       }
     }
-    batches.sort((a, b) => {
-      const order = (row: ScheduleRow) => (row.schedule.status === "active" ? 0 : row.schedule.status === "paused" ? 1 : 2)
-      const byStatus = order(a) - order(b)
-      if (byStatus !== 0) return byStatus
-      return (a.schedule.nextDueAt ?? Number.MAX_SAFE_INTEGER) - (b.schedule.nextDueAt ?? Number.MAX_SAFE_INTEGER)
-    })
-    return batches
+    return sortRows(rows)
+  }
+
+  /**
+   * Patched view of the rows without a network sweep: apply `mutate` to the
+   * cached schedule, then rebuild rows from the cache. Cheap and immediate;
+   * the next explicit refresh still reconciles with the server.
+   */
+  private patchLocal(scheduleID: string, mutate: (schedule: ScheduleInfo) => void): ScheduleRow[] {
+    for (const [sessionID, schedules] of this.scheduleCache) {
+      const index = schedules.findIndex((schedule) => schedule.id === scheduleID)
+      if (index < 0) continue
+      const next = [...schedules]
+      next[index] = { ...schedules[index], sessionID: schedules[index].sessionID ?? sessionID }
+      mutate(next[index])
+      this.scheduleCache.set(sessionID, next)
+      break
+    }
+    return this.rowsFromCache()
+  }
+
+  /** Rebuild rows from the per-session cache (no network). */
+  private rowsFromCache(): ScheduleRow[] {
+    const rows: ScheduleRow[] = []
+    for (const [sessionID, schedules] of this.scheduleCache) {
+      const session = this.sessions.get(sessionID)
+      for (const schedule of schedules) {
+        rows.push({ schedule, sessionTitle: session?.title ?? sessionID, session })
+      }
+    }
+    return sortRows(rows)
+  }
+
+  /** Public read of the cache, for views that patch instead of re-fetching. */
+  cachedRows(): ScheduleRow[] {
+    return this.rowsFromCache()
   }
 
   /**
    * Chat models grouped by provider, so the form can offer provider → model
    * cascading with search. Beta models stay selectable; deprecated ones do not.
+   * Cached after the first fetch; the catalog rarely changes mid-dialog.
    */
   async modelCatalog(): Promise<ModelProviderGroup[]> {
+    if (this.catalog) return this.catalog
     const [modelResponse, providerResponse] = await Promise.allSettled([
       this.client.model.list({ types: ["chat"] }),
       this.client.provider.list(),
@@ -104,6 +146,7 @@ export class ScheduleStore {
       group.models.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
     }
     result.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+    this.catalog = result
     return result
   }
 
@@ -138,7 +181,11 @@ export class ScheduleStore {
         },
         ...(draft.ends ? { ends: draft.ends } : {}),
       })
-      this.sessions.set(session.id, { ...session, ...(draft.model ? { model: draft.model } : {}) })
+      const stored: SessionInfo = { ...session, ...(draft.model ? { model: draft.model } : {}) }
+      this.sessions.set(session.id, stored)
+      // Put the new schedule in the cache so the list can show it without a sweep.
+      const existing = this.scheduleCache.get(session.id) ?? []
+      this.scheduleCache.set(session.id, [...existing, response])
       return response
     } catch (error) {
       // The mount session is useless without its schedule; drop it again.
@@ -173,17 +220,38 @@ export class ScheduleStore {
     }
   }
 
-  async pause(scheduleID: string): Promise<ScheduleInfo> {
-    return this.client.experimental.schedule.pause({ scheduleID })
+  async pause(scheduleID: string): Promise<ScheduleRow[]> {
+    const updated = await this.client.experimental.schedule.pause({ scheduleID })
+    return this.patchLocal(scheduleID, (schedule) => Object.assign(schedule, updated))
   }
 
-  async resume(scheduleID: string): Promise<ScheduleInfo> {
-    return this.client.experimental.schedule.resume({ scheduleID })
+  async resume(scheduleID: string): Promise<ScheduleRow[]> {
+    const updated = await this.client.experimental.schedule.resume({ scheduleID })
+    return this.patchLocal(scheduleID, (schedule) => Object.assign(schedule, updated))
   }
 
   async remove(scheduleID: string): Promise<void> {
     await this.client.experimental.schedule.delete({ scheduleID })
+    // Drop it from the cache so the list view reflects the deletion at once.
+    for (const [sessionID, schedules] of this.scheduleCache) {
+      const index = schedules.findIndex((schedule) => schedule.id === scheduleID)
+      if (index >= 0) {
+        const next = schedules.filter((schedule) => schedule.id !== scheduleID)
+        this.scheduleCache.set(sessionID, next)
+        break
+      }
+    }
   }
+}
+
+/** Active first, then by next due time; ended tasks last. */
+function sortRows(rows: ScheduleRow[]): ScheduleRow[] {
+  return rows.sort((a, b) => {
+    const order = (row: ScheduleRow) => (row.schedule.status === "active" ? 0 : row.schedule.status === "paused" ? 1 : 2)
+    const byStatus = order(a) - order(b)
+    if (byStatus !== 0) return byStatus
+    return (a.schedule.nextDueAt ?? Number.MAX_SAFE_INTEGER) - (b.schedule.nextDueAt ?? Number.MAX_SAFE_INTEGER)
+  })
 }
 
 function toModelChoice(model: ModelInfo): ModelChoice {

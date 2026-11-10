@@ -20,12 +20,15 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   const ctx = props.ctx
   const [tab, setTab] = createSignal<Tab>("list")
   const [rows, setRows] = createSignal<ScheduleRow[]>([])
-  const [loading, setLoading] = createSignal(true)
+  // The very first load shows the scan hint; later refreshes keep the list up.
+  const [primed, setPrimed] = createSignal(false)
+  const loading = () => !primed()
   const [error, setError] = createSignal("")
   const [expanded, setExpanded] = createSignal<string>("")
   const [busyId, setBusyId] = createSignal("")
   const [filter, setFilter] = createSignal<Filter>("all")
   const [confirming, setConfirming] = createSignal<string>("")
+  const [search, setSearch] = createSignal("")
   const [nowTick, setNowTick] = createSignal(0)
 
   // One shared ticking clock drives every countdown on the page.
@@ -37,14 +40,13 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   onCleanup(() => clearInterval(timer))
 
   const load = async () => {
-    setLoading(true)
     setError("")
     try {
       setRows(await props.store.listAll())
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setLoading(false)
+      setPrimed(true)
     }
   }
 
@@ -54,12 +56,23 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
     setBusyId(row.schedule.id)
     setError("")
     try {
-      if (action === "delete") await props.store.remove(row.schedule.id)
-      else if (action === "pause") await props.store.pause(row.schedule.id)
-      else await props.store.resume(row.schedule.id)
-      await load()
+      if (action === "delete") {
+        await props.store.remove(row.schedule.id)
+        if (expanded() === row.schedule.id) setExpanded("")
+        // Deletion is already reflected in the store cache; rebuild locally.
+        setRows(props.store.cachedRows())
+      } else {
+        // pause/resume patch the store cache and return fresh rows — no full
+        // re-sweep of every session (the old code re-fetched N sessions).
+        const patched = action === "pause"
+          ? await props.store.pause(row.schedule.id)
+          : await props.store.resume(row.schedule.id)
+        setRows(patched)
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
+      // The local view may be stale after a failure; reconcile quietly.
+      void load()
     } finally {
       setBusyId("")
       setConfirming("")
@@ -70,12 +83,16 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   const [formDirty, setFormDirty] = createSignal(false)
 
   const switchTab = (next: Tab) => {
-    // Leaving a half-written create form deserves a beat of friction.
-    if (tab() === "create" && next === "list" && formDirty()) {
-      if (!window.confirm("提示词还没提交，返回列表将丢弃已填写的内容。确定返回？")) return
+    // Leaving a half-written create form deserves a beat of friction; an
+    // inline confirm on the back button replaces the jarring window.confirm.
+    if (tab() === "create" && next === "list" && formDirty() && !confirmLeave()) {
+      setConfirmLeave(true)
+      return
     }
+    setConfirmLeave(false)
     setTab(next)
   }
+  const [confirmLeave, setConfirmLeave] = createSignal(false)
 
   const counts = createMemo(() => ({
     active: rows().filter((row) => row.schedule.status === "active").length,
@@ -86,7 +103,14 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
 
   const visibleRows = createMemo(() => {
     const current = filter()
-    return rows().filter((row) => (current === "all" ? true : row.schedule.status === current))
+    const needle = search().trim().toLowerCase()
+    return rows().filter((row) => {
+      if (current !== "all" && row.schedule.status !== current) return false
+      if (!needle) return true
+      const haystack =
+        `${row.schedule.name ?? ""} ${row.schedule.action.prompt} ${row.sessionTitle}`.toLowerCase()
+      return haystack.includes(needle)
+    })
   })
 
   return (
@@ -155,6 +179,18 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
         </Show>
       </div>
 
+      <Show when={tab() === "create" && confirmLeave()}>
+        <p class="sc-hint sc-hint-bad">
+          提示词还没提交，返回列表将丢弃已填写的内容。
+          <button type="button" class="sc-btn sc-btn-small" onClick={() => setConfirmLeave(false)}>
+            继续编辑
+          </button>
+          <button type="button" class="sc-btn sc-btn-small sc-btn-danger" onClick={() => setTab("list")}>
+            放弃并返回
+          </button>
+        </p>
+      </Show>
+
       <Show when={error()}>
         <p class="sc-hint sc-hint-bad">{error()}</p>
       </Show>
@@ -169,6 +205,9 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
             onCreated={() => {
               setFormDirty(false)
               setTab("list")
+              // The new schedule is already in the store cache; show it at
+              // once, then quietly reconcile in the background.
+              setRows(props.store.cachedRows())
               void load()
             }}
             onCancel={() => switchTab("list")}
@@ -209,16 +248,38 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                 </Show>
               )}
             </For>
+            <Show when={rows().length >= 5}>
+              <input
+                type="search"
+                class="sc-input sc-search"
+                placeholder="搜索任务…"
+                aria-label="搜索任务"
+                value={search()}
+                onInput={(event) => setSearch(event.currentTarget.value)}
+              />
+            </Show>
           </div>
 
           <Show
             when={visibleRows().length > 0}
             fallback={
               <div class="sc-empty sc-empty-slim">
-                <p class="sc-empty-title">没有{FILTERS.find((item) => item.id === filter())?.label}的任务</p>
-                <button type="button" class="sc-btn" onClick={() => setFilter("all")}>
-                  查看全部
-                </button>
+                <Show
+                  when={search().trim()}
+                  fallback={
+                    <>
+                      <p class="sc-empty-title">没有{FILTERS.find((item) => item.id === filter())?.label}的任务</p>
+                      <button type="button" class="sc-btn" onClick={() => setFilter("all")}>
+                        查看全部
+                      </button>
+                    </>
+                  }
+                >
+                  <p class="sc-empty-title">没有匹配「{search().trim()}」的任务</p>
+                  <button type="button" class="sc-btn" onClick={() => setSearch("")}>
+                    清除搜索
+                  </button>
+                </Show>
               </div>
             }
           >

@@ -1296,6 +1296,27 @@ select.sc-input {
   background: rgba(255, 255, 255, 0.22);
 }
 
+/* Inline task search, right of the filter pills. */
+.sc-search {
+  flex: 1 1 140px;
+  max-width: 220px;
+  min-width: 120px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+/* Last run output in the detail view: pre-wrapped, capped. */
+.sc-output-text {
+  white-space: pre-wrap;
+  max-height: 140px;
+  overflow-y: auto;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--sc-muted);
+}
+
 .sc-empty-slim {
   padding: 20px;
   flex-direction: row;
@@ -1513,6 +1534,28 @@ select.sc-input {
 
   .sc-form-status {
     display: none;
+  }
+}
+
+/* Reduced motion: keep the state changes, drop the animation. */
+@media (prefers-reduced-motion: reduce) {
+  .sc-advanced,
+  .sc-detail,
+  .sc-combo-list {
+    animation: none !important;
+  }
+
+  .sc-advanced-chevron {
+    transition: none !important;
+  }
+
+  .sc-btn-danger.sc-btn-small.confirm-armed {
+    animation: none !important;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+  }
+
+  .sc-btn:active:not(:disabled) {
+    transform: none;
   }
 }
 `

@@ -951,6 +951,13 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number }) {
             </Show>
           </span>
         </Show>
+        <Show when={schedule.lastOutput?.trim()}>
+          <span class="sc-detail-key">上次输出</span>
+          <span class="sc-detail-value sc-prompt-text">
+            <span class="sc-detail-text sc-output-text">{schedule.lastOutput}</span>
+            <CopyButton text={schedule.lastOutput!} label="输出" />
+          </span>
+        </Show>
         <span class="sc-detail-key">创建于</span>
         <span class="sc-detail-value">{clockText(schedule.time.created)}</span>
       </div>
