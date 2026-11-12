@@ -24,6 +24,8 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   const [primed, setPrimed] = createSignal(false)
   const loading = () => !primed()
   const [error, setError] = createSignal("")
+  // Non-fatal partial-scan notice: some sessions failed to report schedules.
+  const [scanPartial, setScanPartial] = createSignal("")
   const [expanded, setExpanded] = createSignal<string>("")
   const [busyId, setBusyId] = createSignal("")
   const [filter, setFilter] = createSignal<Filter>("all")
@@ -42,7 +44,14 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   const load = async () => {
     setError("")
     try {
-      setRows(await props.store.listAll())
+      const result = await props.store.listAll()
+      setRows(result.rows)
+      // 部分会话扫描失败时如实声明结果不完整，而不是让总数显得可信。
+      setScanPartial(
+        result.failedSessions > 0
+          ? `有 ${result.failedSessions} 个会话读取失败，任务列表可能不完整；可点「刷新」重试。`
+          : "",
+      )
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -52,12 +61,22 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
 
   void load()
 
+  // Countdowns tick every second, but the data behind them needs its own
+  // calibration: poll at a calm cadence while the panel is visible so a fired
+  // task does not sit with a stale badge until the user refreshes.
+  const poll = setInterval(() => {
+    if (document.hidden) return
+    if (busyId()) return
+    void load()
+  }, 30_000)
+  onCleanup(() => clearInterval(poll))
+
   const act = async (row: ScheduleRow, action: "pause" | "resume" | "delete") => {
     setBusyId(row.schedule.id)
     setError("")
     try {
       if (action === "delete") {
-        await props.store.remove(row.schedule.id)
+        await props.store.remove(row.schedule.id, row.schedule.sessionID ?? row.session?.id)
         if (expanded() === row.schedule.id) setExpanded("")
         // Deletion is already reflected in the store cache; rebuild locally.
         setRows(props.store.cachedRows())
@@ -138,7 +157,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
             <Show when={!props.embedded}>
               <h1 class="sc-hero-title">定时任务</h1>
             </Show>
-            <p class="sc-sub">把重复的事交给 agent：到点唤醒会话执行提示词，支持 cron、条件与执行目录。</p>
+            <p class="sc-sub">把重复的事交给 agent：到点唤醒会话执行提示词。任务在本机 OpenCode 后台运行，应用退出后不会触发。</p>
             <div class="sc-hero-meta">
               <Show when={!loading()} fallback={<span>正在扫描会话…</span>}>
                 <span>
@@ -194,6 +213,9 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
       <Show when={error()}>
         <p class="sc-hint sc-hint-bad">{error()}</p>
       </Show>
+      <Show when={scanPartial() && !error()}>
+        <p class="sc-hint sc-hint-warn">{scanPartial()}</p>
+      </Show>
 
       <Show
         when={tab() === "list"}
@@ -233,31 +255,28 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
           <div class="sc-filters" role="tablist" aria-label="任务筛选">
             <For each={FILTERS}>
               {(item) => (
-                <Show when={item.id === "all" || counts()[item.id] > 0}>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={filter() === item.id}
-                    class="sc-filter"
-                    classList={{ active: filter() === item.id }}
-                    onClick={() => setFilter(item.id)}
-                  >
-                    {item.label}
-                    <span class="sc-filter-count">{counts()[item.id]}</span>
-                  </button>
-                </Show>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={filter() === item.id}
+                  class="sc-filter"
+                  classList={{ active: filter() === item.id }}
+                  onClick={() => setFilter(item.id)}
+                >
+                  {item.label}
+                  <span class="sc-filter-count">{counts()[item.id]}</span>
+                </button>
               )}
             </For>
-            <Show when={rows().length >= 5}>
-              <input
-                type="search"
-                class="sc-input sc-search"
-                placeholder="搜索任务…"
-                aria-label="搜索任务"
-                value={search()}
-                onInput={(event) => setSearch(event.currentTarget.value)}
-              />
-            </Show>
+            {/* 搜索与筛选常驻，避免任务增减时布局跳动、焦点丢失。 */}
+            <input
+              type="search"
+              class="sc-input sc-search"
+              placeholder="搜索任务…"
+              aria-label="搜索任务"
+              value={search()}
+              onInput={(event) => setSearch(event.currentTarget.value)}
+            />
           </div>
 
           <Show
@@ -295,17 +314,19 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                   aria-expanded={expanded() === row.schedule.id}
                   onClick={() => setExpanded(expanded() === row.schedule.id ? "" : row.schedule.id)}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault()
-                      setExpanded(expanded() === row.schedule.id ? "" : row.schedule.id)
-                    }
+                    // 评审 S13：展开/折叠只响应卡片本身的 Enter/空格——内部按钮
+                    // 的键盘事件不再被父级拦截或重复触发。
+                    if (event.key !== "Enter" && event.key !== " ") return
+                    if (event.target !== event.currentTarget) return
+                    event.preventDefault()
+                    setExpanded(expanded() === row.schedule.id ? "" : row.schedule.id)
                   }}
                 >
                   <div class="sc-card-head">
                     <div class="sc-card-title">
                       <span class="sc-name">{row.schedule.name?.trim() || row.schedule.action.prompt.slice(0, 40)}</span>
-                      <span class={`sc-badge sc-badge-${row.schedule.status}`}>
-                        {row.schedule.status === "active" ? "进行中" : row.schedule.status === "paused" ? "已暂停" : "已结束"}
+                      <span class={`sc-badge sc-status-${row.schedule.status}`}>
+                        {row.schedule.status === "active" ? "已启用" : row.schedule.status === "paused" ? "已暂停" : "已结束"}
                       </span>
                     </div>
                     <div class="sc-card-actions">
@@ -340,7 +361,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                         class="sc-btn sc-btn-small sc-btn-danger"
                         classList={{ "confirm-armed": confirming() === row.schedule.id }}
                         disabled={busyId() === row.schedule.id}
-                        title="删除任务及其挂载会话"
+                        title="删除这条定时任务；专用挂载会话一并删除"
                         onClick={(event) => {
                           event.stopPropagation()
                           if (confirming() === row.schedule.id) {
@@ -358,7 +379,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                           }
                         }}
                       >
-                        {confirming() === row.schedule.id ? "确认删除" : "删除"}
+                        {confirming() === row.schedule.id ? "确认删除任务" : "删除"}
                       </button>
                     </div>
                   </div>
@@ -389,7 +410,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                   </div>
                   <ScheduleConfig session={row.session} />
                   <Show when={expanded() === row.schedule.id}>
-                    <ScheduleDetail row={row} now={now()} />
+                    <ScheduleDetail row={row} now={now()} ctx={ctx} />
                   </Show>
                 </div>
               )}

@@ -125,7 +125,9 @@ export function ScheduleForm(props: {
   const [customDir, setCustomDir] = createSignal(false)
   const [name, setName] = createSignal("")
   const [inMinutes, setInMinutes] = createSignal("30")
-  const [atTime, setAtTime] = createSignal(defaultAt())
+  // 记住打开表单时的默认值；dirty 不能拿“此刻 + 1 小时”当基线，否则时间流逝本身会把表单变脏。
+  const initialAt = defaultAt()
+  const [atTime, setAtTime] = createSignal(initialAt)
   const [everyMinutes, setEveryMinutes] = createSignal("60")
   const [cron, setCron] = createSignal("0 9 * * 1-5")
   const [prompt, setPrompt] = createSignal("")
@@ -189,7 +191,8 @@ export function ScheduleForm(props: {
     }
     if (kind() === "at") {
       const at = Date.parse(atTime())
-      return Number.isNaN(at) ? null : { kind: "at", at: atTime() }
+      // A past time would fire immediately or never; require a future instant.
+      return Number.isNaN(at) || at <= Date.now() ? null : { kind: "at", at: atTime() }
     }
     if (kind() === "every") {
       const value = Number(everyMinutes())
@@ -198,30 +201,32 @@ export function ScheduleForm(props: {
     return isValidCron(cron()) ? { kind: "cron", cron: cron().trim() } : null
   })
 
-  const previews = createMemo(() => (draft() ? previewRuns(draft()!, Date.now(), 5) : []))
-
   // The preview card ticks: countdowns stay honest while the form sits open.
+  // 这组时钟必须先于 previews 声明：createMemo 会立即执行一次，晚声明会命中 TDZ。
   const [tick, setTick] = createSignal(0)
-  let clock: ReturnType<typeof setInterval> | undefined
   onMount(() => {
-    clock = setInterval(() => setTick((value) => value + 1), 1000)
+    const clock = setInterval(() => setTick((value) => value + 1), 1000)
     onCleanup(() => clearInterval(clock))
   })
   const now = () => {
     void tick()
     return Date.now()
   }
-  const previewRunsLive = createMemo(() => {
+
+  // The preview recomputes against the ticking clock, so "延迟 30 分钟" 的预计
+  // 绝对时间随表单停留时间前移，而不是停留在打开表单那一刻。
+  const previews = createMemo(() => {
     void tick()
-    return previews()
+    return draft() ? previewRuns(draft()!, now(), 5) : []
   })
+  const previewRunsLive = previews
 
   const submit = async () => {
-    if (!draft()) return
+    // 非法次数绝不能静默落成“不限次”：提交前再挡一次。
+    if (!draft() || !canSubmit()) return
     setBusy(true)
     setError("")
     try {
-      const ends = kind() === "in" || kind() === "at" ? undefined : endsWith()
       const selected = selectedModel()
       const dir = directory().trim()
       await props.store.createSchedule({
@@ -229,7 +234,7 @@ export function ScheduleForm(props: {
         name: name().trim() || undefined,
         when: draft()!,
         prompt: prompt().trim(),
-        ...(endsWith() ? { ends: ends! } : {}),
+        ...(kind() !== "in" && kind() !== "at" && endsWith() ? { ends: endsWith()! } : {}),
         ...(selected
           ? {
               model: {
@@ -279,7 +284,15 @@ export function ScheduleForm(props: {
     const numeric = Number(value)
     return !Number.isInteger(numeric) || numeric <= 0
   }
-  const canSubmit = () => !busy() && draft() !== null && prompt().trim().length > 0
+  // 绝对时间必须晚于当前时刻；否则到点即触发或永远不触发。
+  const invalidAt = () => {
+    if (kind() !== "at") return false
+    const at = Date.parse(atTime())
+    return Number.isNaN(at) || at <= Date.now()
+  }
+  // 次数错误必须阻止提交：空值才代表“不限”，错误值不允许被省略成不限。
+  const canSubmit = () =>
+    !busy() && draft() !== null && prompt().trim().length > 0 && !invalidTimes() && !invalidAt()
 
   // Footer summary: the schedule that is about to be created, in words.
   const draftWhen = createMemo<ScheduleWhen | null>(() => {
@@ -322,7 +335,23 @@ export function ScheduleForm(props: {
   }
 
   // Report progress so the page can confirm before discarding a half-written form.
-  const dirty = createMemo(() => prompt().trim().length > 0 || name().trim().length > 0 || providerID() !== "")
+  // Compare every editable field, not just the first three: 只改时间或目录也
+  // 是用户的输入，离开前必须给出确认机会。
+  const dirty = createMemo(
+    () =>
+      prompt().trim().length > 0 ||
+      name().trim().length > 0 ||
+      providerID() !== "" ||
+      modelKey() !== "" ||
+      variant() !== "" ||
+      agent() !== "" ||
+      directory().trim() !== "" ||
+      inMinutes() !== "30" ||
+      atTime() !== initialAt ||
+      everyMinutes() !== "60" ||
+      cron() !== "0 9 * * 1-5" ||
+      times().trim() !== "",
+  )
   createEffect(() => props.onDirtyChange?.(dirty()))
 
   return (
@@ -452,6 +481,9 @@ export function ScheduleForm(props: {
                   </For>
                 </div>
               </div>
+              <Show when={invalidAt()}>
+                <p class="sc-hint sc-hint-bad">请选择晚于当前时间的时间点</p>
+              </Show>
             </Show>
 
             <Show when={kind() === "every"}>
@@ -896,12 +928,29 @@ function CopyButton(props: { text: string; label: string }) {
   )
 }
 
-export function ScheduleDetail(props: { row: ScheduleRow; now: number }) {
+export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Context }) {
   const { schedule } = props.row
   const outcome = outcomeLabel(schedule.lastOutcome)
   const model = modelRefLabel(props.row.session?.model)
   const agent = props.row.session?.agent?.trim() ?? ""
   const directory = props.row.session?.location?.directory ?? props.row.session?.directory ?? ""
+  // 打开执行会话：复用宿主页签，避免只给一个无法点击的会话名。
+  const sessionServerID = createMemo(() => props.row.session?.id ?? schedule.sessionID ?? "")
+  const openSession = () => {
+    const sessionID = sessionServerID()
+    if (!sessionID) return
+    const serverID = props.ctx.servers.list()[0]
+    if (!serverID) return
+    props.ctx.tabs.open({ server: serverID, id: sessionID }, { focus: true })
+  }
+  const canOpenSession = () => {
+    if (!sessionServerID()) return false
+    try {
+      return props.ctx.servers.list().length > 0
+    } catch {
+      return false
+    }
+  }
   return (
     <div
       class="sc-detail"
@@ -913,6 +962,19 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number }) {
         <span class="sc-detail-value" title={props.row.sessionTitle}>
           <span class="sc-detail-text">{props.row.sessionTitle}</span>
           <CopyButton text={props.row.sessionTitle} label="会话" />
+          <Show when={canOpenSession()}>
+            <button
+              type="button"
+              class="sc-btn sc-btn-small sc-detail-open"
+              onClick={(event) => {
+                event.stopPropagation()
+                openSession()
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              查看执行会话
+            </button>
+          </Show>
         </span>
         <Show when={model}>
           <span class="sc-detail-key">模型</span>

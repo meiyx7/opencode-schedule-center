@@ -1,6 +1,13 @@
 import type { ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode/client/promise"
 import type { CreateDraft, ModelChoice, ModelProviderGroup, ScheduleInfo, ScheduleRow, SessionInfo, WhenDraft } from "./types"
 
+/** Result of a full sweep: rows plus how many sessions failed to report. */
+export interface ListResult {
+  rows: ScheduleRow[]
+  /** Sessions whose schedule list could not be read; their tasks are missing from `rows`. */
+  failedSessions: number
+}
+
 /**
  * The schedule API filters every list call by sessionID, so the panel sweeps
  * the session list and merges per-session results. Sessions rarely exceed a
@@ -40,11 +47,13 @@ export class ScheduleStore {
   }
 
   /** Fetch schedules for every known session and return active-first rows. */
-  async listAll(): Promise<ScheduleRow[]> {
+  async listAll(): Promise<ListResult> {
     await this.refreshSessions()
     const ids = [...this.sessions.keys()]
     this.scheduleCache.clear()
     const rows: ScheduleRow[] = []
+    // 部分会话扫描失败时不静默吞掉：记录数量，让页面能声明“结果不完整”。
+    let failedSessions = 0
     const chunkSize = 20
     for (let start = 0; start < ids.length; start += chunkSize) {
       const chunk = ids.slice(start, start + chunkSize)
@@ -55,7 +64,10 @@ export class ScheduleStore {
         }),
       )
       for (const result of results) {
-        if (result.status !== "fulfilled") continue
+        if (result.status !== "fulfilled") {
+          failedSessions += 1
+          continue
+        }
         const { sessionID, schedules } = result.value
         this.scheduleCache.set(sessionID, schedules)
         const session = this.sessions.get(sessionID)
@@ -68,7 +80,7 @@ export class ScheduleStore {
         }
       }
     }
-    return sortRows(rows)
+    return { rows: sortRows(rows), failedSessions }
   }
 
   /**
@@ -158,10 +170,28 @@ export class ScheduleStore {
       ...(draft.agent ? { agent: draft.agent } : {}),
       ...(draft.directory ? { location: { directory: draft.directory } } : {}),
     })
+    let modelConfirmed = !draft.model
     if (draft.model && !sameModel(session.model, draft.model)) {
       // Some hosts ignore `model` on create; switch explicitly so the picked
       // model is what the schedule will wake with.
-      await this.client.session.switchModel({ sessionID: session.id, model: draft.model }).catch(() => undefined)
+      try {
+        await this.client.session.switchModel({ sessionID: session.id, model: draft.model })
+        // 切换接口可能被静默忽略：回读会话核实，不拿选择值冒充事实。
+        const verify = await this.client.session.get({ sessionID: session.id })
+        modelConfirmed = sameModel(verify.model, draft.model)
+      } catch {
+        modelConfirmed = false
+      }
+    } else if (draft.model) {
+      modelConfirmed = true
+    }
+    if (draft.model && !modelConfirmed) {
+      // The mount session is useless with the wrong model; bail out instead of
+      // silently creating a task that wakes with a different model.
+      void this.client.session.remove({ sessionID: session.id }).catch(() => undefined)
+      throw new Error(
+        `无法确认模型 ${draft.model.providerID}/${draft.model.id} 已生效，任务未创建；请稍后重试或不指定模型。`,
+      )
     }
     try {
       const when: WhenDraft = draft.when
@@ -181,6 +211,7 @@ export class ScheduleStore {
         },
         ...(draft.ends ? { ends: draft.ends } : {}),
       })
+      // 只缓存经核实的模型；失败路径已在上面的 throw 中回滚。
       const stored: SessionInfo = { ...session, ...(draft.model ? { model: draft.model } : {}) }
       this.sessions.set(session.id, stored)
       // Put the new schedule in the cache so the list can show it without a sweep.
@@ -230,16 +261,30 @@ export class ScheduleStore {
     return this.patchLocal(scheduleID, (schedule) => Object.assign(schedule, updated))
   }
 
-  async remove(scheduleID: string): Promise<void> {
+  /**
+   * Delete a schedule. The schedule's mount session is created by this plugin
+   * (titled 定时任务：…), so it is removed too — but never a shared session the
+   * user may keep using; those are left untouched.
+   */
+  async remove(scheduleID: string, sessionID?: string): Promise<void> {
     await this.client.experimental.schedule.delete({ scheduleID })
     // Drop it from the cache so the list view reflects the deletion at once.
-    for (const [sessionID, schedules] of this.scheduleCache) {
+    let owner: string | undefined
+    for (const [id, schedules] of this.scheduleCache) {
       const index = schedules.findIndex((schedule) => schedule.id === scheduleID)
       if (index >= 0) {
         const next = schedules.filter((schedule) => schedule.id !== scheduleID)
-        this.scheduleCache.set(sessionID, next)
+        this.scheduleCache.set(id, next)
+        owner = id
         break
       }
+    }
+    const mount = sessionID ?? owner
+    // Only remove the dedicated mount session (our own title), never shared ones.
+    const session = mount ? this.sessions.get(mount) : undefined
+    if (mount && session && session.title?.startsWith("定时任务")) {
+      await this.client.session.remove({ sessionID: mount }).catch(() => undefined)
+      this.sessions.delete(mount)
     }
   }
 }

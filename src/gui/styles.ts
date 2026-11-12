@@ -286,6 +286,23 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   color: #14b8a6;
 }
 
+/* Scheduling status is a lifecycle fact, not an execution verdict: 启用即强调,
+   暂停即提醒, 结束用中性色 —— 正常跑完的任务不该被标红。 */
+.sc-status-active {
+  background: rgba(20, 184, 166, 0.15);
+  color: #14b8a6;
+}
+
+.sc-status-paused {
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
+}
+
+.sc-status-done {
+  background: rgba(127, 127, 127, 0.14);
+  color: var(--sc-muted);
+}
+
 .sc-badge-paused,
 .sc-badge-warn {
   background: rgba(245, 158, 11, 0.15);
@@ -329,6 +346,10 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   align-items: center;
   gap: 6px;
   user-select: text;
+}
+
+.sc-detail-open {
+  flex: none;
 }
 
 .sc-detail-text {
@@ -1194,6 +1215,10 @@ select.sc-input {
 
 .sc-hint-bad {
   color: #ef4444;
+}
+
+.sc-hint-warn {
+  color: #d97706;
 }
 
 /* Sticky action bar with live status. */
