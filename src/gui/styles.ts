@@ -1342,17 +1342,63 @@ select.sc-input {
   color: var(--sc-muted);
 }
 
-/* Reserve one line for page-level hints so their appearance does not shift
-   the list below (30s polls can clear or re-add the partial-scan notice). */
-.sc-hint-slot {
-  height: 16px;
-  overflow: hidden;
+/* The partial-scan warning sits beside 刷新 as an icon; the sentence shows on
+   hover/keyboard focus instead of taking a row of its own. */
+.sc-toolbar-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.sc-hint-slot .sc-hint {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sc-scan-warn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  color: #d97706;
+  cursor: help;
+}
+
+.sc-scan-warn:hover,
+.sc-scan-warn:focus-visible {
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  outline: none;
+}
+
+.sc-scan-warn .sc-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.sc-scan-warn::after {
+  content: attr(aria-label);
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  max-width: 320px;
+  padding: 6px 10px;
+  border: 1px solid var(--sc-border);
+  border-radius: 8px;
+  background: var(--sc-card);
+  color: var(--sc-strong);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: normal;
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 18%, transparent);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.sc-scan-warn:hover::after,
+.sc-scan-warn:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
 }
 
 .sc-hint-bad {

@@ -5,7 +5,7 @@ import { clockText, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRu
 import { Combobox, type ComboOption } from "./combobox"
 import type { ScheduleStore } from "../store"
 
-type IconName = "clock" | "calendar" | "repeat" | "terminal" | "sliders" | "check" | "chevron" | "spark"
+type IconName = "clock" | "calendar" | "repeat" | "terminal" | "sliders" | "check" | "chevron" | "spark" | "warn"
 
 const WHEN_KINDS: Array<{ id: WhenDraft["kind"]; label: string; icon: IconName }> = [
   { id: "in", label: "延迟", icon: "clock" },
@@ -55,7 +55,7 @@ const AT_PRESETS: Array<{ label: string; at: () => string }> = [
   },
 ]
 
-function Icon(props: { name: IconName }) {
+export function Icon(props: { name: IconName }) {
   return (
     <svg
       class="sc-icon"
@@ -100,6 +100,11 @@ function Icon(props: { name: IconName }) {
         <Match when={props.name === "spark"}>
           <path d="M7 2.4l1.3 2.9 2.9 1.2-2.9 1.2L7 10.6 5.7 7.7 2.8 6.5l2.9-1.2z" />
           <path d="M12.2 10.6l.6 1.3 1.3.5-1.3.5-.6 1.3-.6-1.3-1.3-.5 1.3-.5z" />
+        </Match>
+        <Match when={props.name === "warn"}>
+          <path d="M8 2.6l6 10.8H2z" />
+          <path d="M8 6.4v3.2" />
+          <path d="M8 11.6h.01" />
         </Match>
       </Switch>
     </svg>

@@ -2,7 +2,7 @@ import { createSignal, createMemo, For, onCleanup, Show } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
 import type { ScheduleRow } from "../types"
 import { clockText, describeWhen, outcomeLabel, relativeTime } from "./format"
-import { ScheduleConfig, ScheduleDetail, ScheduleForm } from "./form"
+import { ScheduleConfig, ScheduleDetail, ScheduleForm, Icon } from "./form"
 import { CSS } from "./styles"
 import type { ScheduleStore } from "../store"
 
@@ -192,9 +192,18 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
           </button>
         </div>
         <Show when={tab() === "list"}>
-          <button type="button" class="sc-btn sc-btn-ghost" disabled={loading()} onClick={() => void load()}>
-            {loading() ? "刷新中…" : "刷新"}
-          </button>
+          <div class="sc-toolbar-end">
+            {/* Partial-scan warning rides next to 刷新 instead of its own row:
+                an icon that reveals the full sentence on hover or click. */}
+            <Show when={scanPartial() && !error()}>
+              <span class="sc-scan-warn" tabIndex={0} role="status" aria-label={scanPartial()}>
+                <Icon name="warn" />
+              </span>
+            </Show>
+            <button type="button" class="sc-btn sc-btn-ghost" disabled={loading()} onClick={() => void load()}>
+              {loading() ? "刷新中…" : "刷新"}
+            </button>
+          </div>
         </Show>
       </div>
 
@@ -210,17 +219,9 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
         </p>
       </Show>
 
-      {/* Hints live in a fixed-height slot: partial-scan and error messages
-          appear or clear as polls run, and the list below must not jump.
-          Both concern the list view only — the create form ignores them. */}
-      <div class="sc-hint-slot">
-        <Show when={tab() === "list" && error()}>
-          <p class="sc-hint sc-hint-bad">{error()}</p>
-        </Show>
-        <Show when={tab() === "list" && !error() && scanPartial()}>
-          <p class="sc-hint sc-hint-warn">{scanPartial()}</p>
-        </Show>
-      </div>
+      <Show when={tab() === "list" && error()}>
+        <p class="sc-hint sc-hint-bad">{error()}</p>
+      </Show>
 
       <Show
         when={tab() === "list"}
