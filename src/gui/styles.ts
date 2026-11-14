@@ -121,6 +121,9 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  /* Anchor for the scan-warning tooltip: abspos against the 26px icon would
+     shrink the bubble to the icon's width and wrap it into a vertical sliver. */
+  position: relative;
 }
 
 .sc-tabs {
@@ -1351,7 +1354,9 @@ select.sc-input {
 }
 
 .sc-scan-warn {
-  position: relative;
+  /* No position here: the ::after tooltip must anchor to .sc-toolbar
+     (position:relative) — anchoring to this 26px icon wraps the sentence
+     into a vertical sliver. */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1376,10 +1381,13 @@ select.sc-input {
 .sc-scan-warn::after {
   content: attr(aria-label);
   position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  /* Anchor to the toolbar (its nearest positioned ancestor is .sc-toolbar):
+     stretch across the row so the sentence wraps naturally, not vertically. */
+  top: calc(100% - 6px);
+  right: 8px;
+  left: auto;
+  width: min(360px, calc(100% - 16px));
   z-index: 40;
-  max-width: 320px;
   padding: 6px 10px;
   border: 1px solid var(--sc-border);
   border-radius: 8px;
