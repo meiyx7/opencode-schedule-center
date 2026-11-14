@@ -1342,6 +1342,19 @@ select.sc-input {
   color: var(--sc-muted);
 }
 
+/* Reserve one line for page-level hints so their appearance does not shift
+   the list below (30s polls can clear or re-add the partial-scan notice). */
+.sc-hint-slot {
+  height: 16px;
+  overflow: hidden;
+}
+
+.sc-hint-slot .sc-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sc-hint-bad {
   color: #ef4444;
 }

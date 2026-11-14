@@ -210,12 +210,17 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
         </p>
       </Show>
 
-      <Show when={error()}>
-        <p class="sc-hint sc-hint-bad">{error()}</p>
-      </Show>
-      <Show when={scanPartial() && !error()}>
-        <p class="sc-hint sc-hint-warn">{scanPartial()}</p>
-      </Show>
+      {/* Hints live in a fixed-height slot: partial-scan and error messages
+          appear or clear as polls run, and the list below must not jump.
+          Both concern the list view only — the create form ignores them. */}
+      <div class="sc-hint-slot">
+        <Show when={tab() === "list" && error()}>
+          <p class="sc-hint sc-hint-bad">{error()}</p>
+        </Show>
+        <Show when={tab() === "list" && !error() && scanPartial()}>
+          <p class="sc-hint sc-hint-warn">{scanPartial()}</p>
+        </Show>
+      </div>
 
       <Show
         when={tab() === "list"}
