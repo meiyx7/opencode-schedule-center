@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
 import type { ModelProviderGroup, ScheduleRow, ScheduleWhen, SessionInfo, WhenDraft } from "../types"
-import { clockText, describeWhen, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime } from "./format"
+import { clockText, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime } from "./format"
 import { Combobox, type ComboOption } from "./combobox"
 import type { ScheduleStore } from "../store"
 
@@ -117,6 +117,7 @@ export function ScheduleForm(props: {
   const [providerID, setProviderID] = createSignal("")
   const [modelKey, setModelKey] = createSignal("")
   const [variant, setVariant] = createSignal("")
+  const [modelPicker, setModelPicker] = createSignal(false)
   const [modelHint, setModelHint] = createSignal("")
   const [agents, setAgents] = createSignal<Array<{ name: string; description?: string }>>([])
   const [agent, setAgent] = createSignal("")
@@ -132,7 +133,7 @@ export function ScheduleForm(props: {
   const [cron, setCron] = createSignal("0 9 * * 1-5")
   const [prompt, setPrompt] = createSignal("")
   const [times, setTimes] = createSignal("")
-  const [advanced, setAdvanced] = createSignal(false)
+  const [advanced, setAdvanced] = createSignal(true)
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
 
@@ -149,7 +150,7 @@ export function ScheduleForm(props: {
   })
 
   const providerOptions = createMemo<ComboOption[]>(() => [
-    { value: "", label: "默认模型（跟随会话）", note: "不指定" },
+    { value: "", label: "跟随会话", note: "默认模型，不指定" },
     ...providers().map((provider) => ({
       value: provider.id,
       label: provider.name,
@@ -170,6 +171,25 @@ export function ScheduleForm(props: {
   )
   const selectedModel = createMemo(() => currentProvider()?.models.find((model) => model.key === modelKey()))
   const variants = createMemo(() => selectedModel()?.variants ?? [])
+  // 合并后的模型入口：把 Provider / 模型 / 变体拼成一行展示，细节放进浮层里选。
+  const modelTriggerText = () => {
+    const model = selectedModel()
+    if (!model) {
+      return providerID() ? `${currentProvider()?.name ?? providerID()} · 选择模型` : "跟随会话（默认模型）"
+    }
+    const base = `${currentProvider()?.name ?? model.providerID} · ${model.name}`
+    return variant() ? `${base} · ${variant()}` : base
+  }
+
+  let modelField: HTMLDivElement | undefined
+  onMount(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!modelPicker()) return
+      if (modelField && !modelField.contains(event.target as Node)) setModelPicker(false)
+    }
+    document.addEventListener("pointerdown", onPointerDown, true)
+    onCleanup(() => document.removeEventListener("pointerdown", onPointerDown, true))
+  })
 
   function selectProvider(value: string) {
     setProviderID(value)
@@ -303,8 +323,6 @@ export function ScheduleForm(props: {
     if (value.kind === "every") return { type: "every", every: value.every }
     return { type: "cron", cron: value.cron }
   })
-  const draftSummary = () => (draftWhen() ? describeWhen(draftWhen()!) : "触发时间无效")
-
   const panelLabel = () => {
     if (kind() === "in") return "延迟时长"
     if (kind() === "at") return "触发时间"
@@ -320,7 +338,11 @@ export function ScheduleForm(props: {
   // Collapsed advanced row reflects the current picks instead of static text.
   const advancedSummary = () => {
     const parts: string[] = []
-    if (selectedModel()) parts.push(selectedModel()!.name)
+    if (selectedModel()) {
+      // 变体跟着模型显示在摘要里，折叠高级选项时也不会看漏。
+      const variantPart = variant() ? ` · ${variant()}` : ""
+      parts.push(`${selectedModel()!.name}${variantPart}`)
+    }
     if (agent()) parts.push(agent())
     const dir = directory().trim()
     if (dir) parts.push(dir)
@@ -330,8 +352,11 @@ export function ScheduleForm(props: {
   const statusText = () => {
     if (draftWhen() === null) return "触发时间无效，请检查设置"
     const first = previewRunsLive()[0]
-    if (prompt().trim().length === 0) return "填写提示词后即可创建"
-    return first ? `将于 ${clockText(first)} 首次触发（${relativeTime(first, now())}）` : draftSummary()
+    // 创建后会自动开一个承载会话，这是定时任务的运行载体，提示里说清楚。
+    const sessionNote = "创建后将自动新建一个会话作为任务载体"
+    if (prompt().trim().length === 0) return `填写提示词后即可创建 · ${sessionNote}`
+    if (!first) return `即将创建 · ${sessionNote}`
+    return `将于 ${clockText(first)} 首次触发（${relativeTime(first, now())}） · ${sessionNote}`
   }
 
   // Report progress so the page can confirm before discarding a half-written form.
@@ -364,7 +389,10 @@ export function ScheduleForm(props: {
           }
           // Escape outside a combobox: close an open advanced panel, else leave the form.
           if (event.key === "Escape" && !event.defaultPrevented) {
-            if (advanced()) {
+            if (modelPicker()) {
+              event.preventDefault()
+              setModelPicker(false)
+            } else if (advanced()) {
               event.preventDefault()
               setAdvanced(false)
             } else {
@@ -374,10 +402,13 @@ export function ScheduleForm(props: {
         }}
       >
       <div class="sc-form-body">
-      <div class="sc-field sc-name-field">
-        <label class="sc-label" for="sc-name">
-          任务名称 <span class="sc-label-note">可选 · 留空时用提示词开头</span>
-        </label>
+      <div class="sc-form-main">
+      <section class="sc-section sc-name-section">
+        <div class="sc-section-head">
+          <span class="sc-mark" />
+          <label class="sc-section-title" for="sc-name">任务名称</label>
+          <span class="sc-label-note">可选 · 留空时用提示词开头</span>
+        </div>
         <input
           id="sc-name"
           class="sc-input sc-name-input"
@@ -385,7 +416,7 @@ export function ScheduleForm(props: {
           value={name()}
           onInput={(event) => setName(event.currentTarget.value)}
         />
-      </div>
+      </section>
 
       <section class="sc-section sc-trigger-section">
         <div class="sc-section-head">
@@ -619,31 +650,24 @@ export function ScheduleForm(props: {
           </div>
         </div>
       </section>
+      </div>
 
       <section class="sc-section sc-exec-section">
         <div class="sc-section-head">
           <span class="sc-mark" />
           <h3 class="sc-section-title">执行</h3>
+          <span class="sc-section-note">唤醒提示词</span>
+          <span class="sc-counter">{prompt().trim().length > 0 ? `${prompt().trim().length} 字` : "必填"}</span>
         </div>
 
-        <div class="sc-field">
-          <div class="sc-label-row">
-            <label class="sc-label" for="sc-prompt">
-              唤醒提示词
-            </label>
-            <span class="sc-counter">
-              {prompt().trim().length > 0 ? `${prompt().trim().length} 字` : "必填"}
-            </span>
-          </div>
-          <textarea
+        <textarea
             id="sc-prompt"
             class="sc-input sc-textarea"
             rows="3"
             placeholder="触发时发送给会话的消息，例如：检查依赖更新并总结"
             value={prompt()}
             onInput={(event) => setPrompt(event.currentTarget.value)}
-          />
-        </div>
+        />
 
         <div class="sc-advanced-wrap">
           <button
@@ -666,50 +690,100 @@ export function ScheduleForm(props: {
 
           <Show when={advanced()}>
             <div class="sc-advanced">
-              <div class="sc-grid">
-                <div class="sc-field">
-                  <label class="sc-label" for="sc-provider">
-                    Provider <span class="sc-label-note">先选 Provider</span>
-                  </label>
-                  <Combobox
-                    id="sc-provider"
-                    value={providerID()}
-                    options={providerOptions()}
-                    placeholder="搜索 Provider 或模型名"
-                    emptyText="没有匹配的 Provider"
-                    onSelect={selectProvider}
-                  />
-                </div>
-
-                <div class="sc-field">
-                  <label class="sc-label" for="sc-model">
-                    模型 <span class="sc-label-note">{providerID() ? "可搜索" : "默认跟随会话"}</span>
-                  </label>
-                  <Combobox
-                    id="sc-model"
-                    value={modelKey()}
-                    options={modelOptions()}
-                    disabled={!providerID()}
-                    placeholder={providerID() ? "搜索模型（名称或 ID）" : "请先选择 Provider"}
-                    emptyText="没有匹配的模型"
-                    onSelect={selectModel}
-                  />
-                  <Show when={variants().length > 0}>
-                    <select
-                      class="sc-input"
-                      value={variant()}
-                      onChange={(event) => setVariant(event.currentTarget.value)}
-                      aria-label="模型变体"
-                    >
-                      <option value="">默认变体</option>
-                      <For each={variants()}>{(id) => <option value={id}>{id}</option>}</For>
-                    </select>
-                  </Show>
-                  <Show when={selectedModel()}>
-                    <p class="sc-hint sc-model-summary">
-                      {selectedModel()!.providerID} / {selectedModel()!.id}
-                      <Show when={selectedModel()!.status !== "active"}>（{selectedModel()!.status}）</Show>
-                    </p>
+              <div class="sc-grid" classList={{ "sc-no-agent": agents().length === 0 }}>
+                <div class="sc-field sc-model-field" ref={modelField}>
+                  <div class="sc-label-row">
+                    <label class="sc-label" for="sc-model-trigger">
+                      模型
+                    </label>
+                    <span class="sc-label-note">Provider · 模型 · 变体</span>
+                  </div>
+                  <button
+                    id="sc-model-trigger"
+                    type="button"
+                    class="sc-input sc-model-trigger"
+                    aria-haspopup="dialog"
+                    aria-expanded={modelPicker()}
+                    title={modelTriggerText()}
+                    onClick={() => setModelPicker(!modelPicker())}
+                  >
+                    <span class="sc-model-trigger-text">{modelTriggerText()}</span>
+                    <span class="sc-model-trigger-chevron" classList={{ open: modelPicker() }}>
+                      <Icon name="chevron" />
+                    </span>
+                  </button>
+                  <Show when={modelPicker()}>
+                    <div class="sc-model-popover" role="dialog" aria-label="选择模型">
+                      <div class="sc-field">
+                        <label class="sc-label" for="sc-provider">
+                          Provider
+                        </label>
+                        <Combobox
+                          id="sc-provider"
+                          value={providerID()}
+                          options={providerOptions()}
+                          placeholder="选择或搜索"
+                          emptyText="没有匹配的 Provider"
+                          onSelect={selectProvider}
+                        />
+                      </div>
+                      <div class="sc-field">
+                        <div class="sc-label-row">
+                          <label class="sc-label" for="sc-model">
+                            模型
+                          </label>
+                          <span class="sc-label-note sc-model-summary">
+                            {selectedModel() ? `${selectedModel()!.providerID} / ${selectedModel()!.id}` : providerID() ? "可搜索" : "先选 Provider"}
+                          </span>
+                        </div>
+                        <Combobox
+                          id="sc-model"
+                          value={modelKey()}
+                          options={modelOptions()}
+                          disabled={!providerID()}
+                          placeholder={providerID() ? "搜索模型" : "请先选择 Provider"}
+                          emptyText="没有匹配的模型"
+                          onSelect={selectModel}
+                        />
+                      </div>
+                      <Show
+                        when={variants().length > 0}
+                        fallback={
+                          <Show when={providerID() && selectedModel()}>
+                            <div class="sc-field">
+                              <span class="sc-label">变体</span>
+                              <p class="sc-hint">该模型没有变体，直接使用默认行为</p>
+                            </div>
+                          </Show>
+                        }
+                      >
+                        <div class="sc-field">
+                          <span class="sc-label">变体</span>
+                          <div class="sc-variant-chips" role="group" aria-label="模型变体">
+                            <button
+                              type="button"
+                              class="sc-chip"
+                              classList={{ active: variant() === "" }}
+                              onClick={() => setVariant("")}
+                            >
+                              默认
+                            </button>
+                            <For each={variants()}>
+                              {(id) => (
+                                <button
+                                  type="button"
+                                  class="sc-chip"
+                                  classList={{ active: variant() === id }}
+                                  onClick={() => setVariant(id)}
+                                >
+                                  {id}
+                                </button>
+                              )}
+                            </For>
+                          </div>
+                        </div>
+                      </Show>
+                    </div>
                   </Show>
                   <Show when={modelHint()}>
                     <p class="sc-hint sc-hint-bad">{modelHint()}</p>
@@ -717,9 +791,9 @@ export function ScheduleForm(props: {
                 </div>
 
                 <Show when={agents().length > 0}>
-                  <div class="sc-field">
+                  <div class="sc-field sc-agent-field">
                     <label class="sc-label" for="sc-agent">
-                      Agent <span class="sc-label-note">默认 Build</span>
+                      Agent
                     </label>
                     <select
                       id="sc-agent"
@@ -727,59 +801,62 @@ export function ScheduleForm(props: {
                       value={agent()}
                       onChange={(event) => setAgent(event.currentTarget.value)}
                     >
-                      <option value="">默认（Build）</option>
+                      <option value="">跟随会话</option>
                       <For each={agents()}>
-                        {(item) => <option value={item.name}>{item.description || item.name}</option>}
+                        {(item) => <option value={item.name}>{item.name}</option>}
                       </For>
                     </select>
                   </div>
                 </Show>
 
-                <div class="sc-field sc-span-2">
-                  <label class="sc-label" for="sc-directory">
-                    执行目录 <span class="sc-label-note">任务里的相对路径以此目录为准</span>
-                  </label>
+                <div class="sc-field sc-directory-field">
+                  <div class="sc-label-row">
+                    <label class="sc-label" for="sc-directory">
+                      执行目录
+                    </label>
+                    <button
+                      type="button"
+                      class="sc-link-button"
+                      onClick={() => {
+                        if (customDir()) {
+                          setCustomDir(false)
+                          setDirectory("")
+                        } else {
+                          setCustomDir(true)
+                        }
+                      }}
+                    >
+                      {customDir() ? "返回选择" : "手动输入"}
+                    </button>
+                  </div>
                   <Show
                     when={customDir()}
                     fallback={
-                      <div class="sc-dir-row">
-                        <select
-                          id="sc-directory"
-                          class="sc-input"
-                          value={directory()}
-                          onChange={(event) => setDirectory(event.currentTarget.value)}
-                        >
-                          <option value="">当前项目目录</option>
-                          <For each={directories()}>{(dir) => <option value={dir}>{dir}</option>}</For>
-                        </select>
-                        <button type="button" class="sc-btn sc-btn-small" onClick={() => setCustomDir(true)}>
-                          手动输入
-                        </button>
-                      </div>
+                      <select
+                        id="sc-directory"
+                        class="sc-input"
+                        value={directory()}
+                        onChange={(event) => setDirectory(event.currentTarget.value)}
+                      >
+                        <option value="">当前项目目录</option>
+                        <For each={directories()}>{(dir) => <option value={dir}>{dir}</option>}</For>
+                      </select>
                     }
                   >
-                    <div class="sc-dir-row">
-                      <input
-                        class="sc-input sc-mono"
-                        placeholder="/absolute/path/to/project"
-                        value={directory()}
-                        onInput={(event) => setDirectory(event.currentTarget.value)}
-                      />
-                      <button
-                        type="button"
-                        class="sc-btn sc-btn-small"
-                        onClick={() => {
-                          setCustomDir(false)
-                          setDirectory("")
-                        }}
-                      >
-                        返回选择
-                      </button>
-                    </div>
+                    <input
+                      id="sc-directory"
+                      class="sc-input sc-mono"
+                      placeholder="/absolute/path/to/project"
+                      value={directory()}
+                      onInput={(event) => setDirectory(event.currentTarget.value)}
+                    />
                   </Show>
                 </div>
+                </div>
+                <Show when={modelHint()}>
+                  <p class="sc-hint sc-hint-bad">{modelHint()}</p>
+                </Show>
               </div>
-            </div>
           </Show>
         </div>
       </section>

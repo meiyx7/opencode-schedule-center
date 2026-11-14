@@ -471,13 +471,20 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 }
 
 /* The form body is a single column by default and folds into two columns on a
-   wide container (the dialog / settings page): trigger on the left, prompt +
-   advanced on the right. This spends the dialog's width instead of its height,
-   so the whole form fits without scrolling. */
+   wide container (the dialog / settings page): the title + trigger on the left,
+   execution on the right. The execution card starts at the top so the dialog
+   does not waste a full-width title row. */
 .sc-form-body {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
+}
+
+.sc-form-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -486,30 +493,42 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
-      "name    name"
-      "trigger exec"
-      "error   error";
+      "main exec"
+      "error error";
     gap: 14px;
     align-items: start;
   }
 
-  .sc-form-body .sc-name-field { grid-area: name; }
-  .sc-form-body .sc-trigger-section { grid-area: trigger; }
-  .sc-form-body .sc-exec-section { grid-area: exec; }
+  .sc-form-body .sc-form-main {
+    grid-area: main;
+  }
+  .sc-form-body .sc-exec-section {
+    grid-area: exec;
+    /* Stretch to the left column's height so both cards end on one line; the
+       prompt textarea inside grows to fill the extra room. */
+    align-self: stretch;
+  }
   .sc-form-body .sc-form-error { grid-area: error; }
 }
 
-/* Name is a title-style field, not another boxed row. */
-.sc-name-field {
-  gap: 6px;
+/* Name is a boxed card like 触发/执行, just tighter horizontally: same border,
+   radius and heading treatment. The doubled class beats .sc-section's later
+   padding rule; top padding matches so both cards' headings sit on one line. */
+.sc-section.sc-name-section {
+  gap: 8px;
+  padding: 14px 14px 6px;
+}
+
+.sc-name-section .sc-section-title {
+  cursor: pointer;
 }
 
 .sc-input.sc-name-input {
-  height: 42px;
-  padding: 0 12px;
-  border-radius: 10px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 9px;
   background: var(--sc-card);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -526,7 +545,7 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 14px 16px 16px;
+  padding: 14px 16px 12px;
   border: 1px solid var(--sc-border);
   border-radius: 13px;
   background: var(--sc-card);
@@ -551,6 +570,18 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   font-size: 12.5px;
   font-weight: 650;
   letter-spacing: 0.02em;
+}
+
+/* Field name riding along inside a section heading (唤醒提示词 next to 执行,
+   the note inside 任务名称). */
+.sc-section-note {
+  color: var(--sc-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.sc-section-head .sc-counter {
+  margin-left: auto;
 }
 
 /* Segmented control for the trigger kind. */
@@ -603,7 +634,7 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
    controls + next-run preview sit side by side only when there is room, and
    stack when the panel lands in a narrow (two-column form) column. */
 .sc-panel {
-  padding: 12px;
+  padding: 10px;
   border: 1px solid color-mix(in srgb, var(--sc-border) 70%, transparent);
   border-radius: 11px;
   background: var(--sc-layer, color-mix(in srgb, var(--sc-muted) 4%, transparent));
@@ -744,7 +775,7 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 7px 12px;
   border: 1px solid color-mix(in srgb, var(--sc-border) 70%, transparent);
   border-radius: 9px;
   background: var(--sc-card);
@@ -836,7 +867,7 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 .sc-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -872,9 +903,20 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   resize: vertical;
 }
 
+.sc-exec-section {
+  gap: 10px;
+}
+
+/* Let the prompt textarea soak up the height the exec card gains when the two
+   columns are stretched to equal height. */
+.sc-exec-section .sc-textarea {
+  flex: 1;
+  min-height: 92px;
+}
+
 .sc-advanced-wrap {
   margin-top: 2px;
-  padding-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid var(--sc-border);
 }
 
@@ -958,25 +1000,14 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 }
 
 .sc-advanced {
-  margin-top: 10px;
-  padding: 12px;
+  margin-top: 8px;
+  padding: 10px;
   border: 1px solid color-mix(in srgb, var(--sc-border) 70%, transparent);
   border-radius: 10px;
   background: var(--sc-layer, color-mix(in srgb, var(--sc-muted) 4%, transparent));
   animation: sc-panel-in 0.18s ease;
   container-type: inline-size;
   container-name: scadv;
-}
-
-/* In a narrow column the advanced fields stack instead of squeezing two-up. */
-@container scadv (max-width: 480px) {
-  .sc-advanced .sc-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .sc-advanced .sc-span-2 {
-    grid-column: auto;
-  }
 }
 
 @keyframes sc-panel-in {
@@ -990,31 +1021,129 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   }
 }
 
+/* Advanced fields: one merged model picker across the top row, agent and
+   directory below, so the panel stays short enough for the dialog. */
 .sc-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 14px;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  grid-template-areas:
+    "model model"
+    "agent directory";
+  gap: 8px 10px;
+  align-items: end;
 }
 
-.sc-span-2 {
-  grid-column: 1 / -1;
+.sc-model-field { grid-area: model; }
+.sc-agent-field { grid-area: agent; }
+.sc-directory-field { grid-area: directory; }
+
+.sc-grid.sc-no-agent {
+  grid-template-areas:
+    "model model"
+    "directory directory";
 }
 
-.sc-dir-row {
+/* Very narrow panels stack rather than squeezing the row. */
+@container scadv (max-width: 360px) {
+  .sc-grid,
+  .sc-grid.sc-no-agent {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: none;
+  }
+
+  .sc-grid > .sc-field {
+    grid-area: auto;
+  }
+}
+
+/* One trigger showing Provider · 模型 · 变体; the pickers live in a popover so
+   the row stays a single compact line. */
+.sc-model-field {
+  position: relative;
+}
+
+.sc-model-trigger {
   display: flex;
   align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sc-model-trigger:hover {
+  border-color: color-mix(in srgb, var(--sc-accent) 45%, var(--sc-border));
+}
+
+.sc-model-trigger[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--sc-accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sc-accent) 14%, transparent);
+}
+
+.sc-model-trigger-text {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-model-trigger-chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--sc-muted);
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+
+.sc-model-trigger-chevron.open {
+  transform: rotate(270deg);
+}
+
+.sc-model-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--sc-border);
+  border-radius: 10px;
+  background: var(--sc-layer, var(--sc-card));
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 22%, transparent);
+  animation: sc-panel-in 0.15s ease;
+}
+
+.sc-variant-chips {
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
-.sc-dir-row .sc-input {
-  flex: 1;
+.sc-link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--sc-accent);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.sc-link-button:hover {
+  text-decoration: underline;
 }
 
 .sc-model-summary {
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  max-width: 68%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Inputs */
@@ -1547,14 +1676,6 @@ select.sc-input {
 @media (max-width: 720px) {
   .sc-panel {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .sc-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .sc-span-2 {
-    grid-column: auto;
   }
 
   .sc-form-status {

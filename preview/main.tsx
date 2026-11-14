@@ -175,7 +175,7 @@ const ctx = {
             name: "GLM-5.3 Flash",
             status: "active",
             enabled: true,
-            variants: [],
+            variants: [{ id: "default" }, { id: "thinking" }],
           },
           {
             providerID: "agnes",
