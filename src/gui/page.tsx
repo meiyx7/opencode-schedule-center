@@ -363,7 +363,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                     <div class="sc-card-title">
                       <span class="sc-name">{row.schedule.name?.trim() || row.schedule.action.prompt.slice(0, 40)}</span>
                       <span class={`sc-badge sc-status-${row.schedule.status}`}>
-                        {row.schedule.status === "active" ? "已启用" : row.schedule.status === "paused" ? "已暂停" : "已结束"}
+                        {row.schedule.status === "active" ? "进行中" : row.schedule.status === "paused" ? "已暂停" : "已结束"}
                       </span>
                     </div>
                     <div class="sc-card-actions">

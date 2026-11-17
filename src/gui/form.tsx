@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
 import type { ConditionDraft, ModelProviderGroup, ScheduleRow, ScheduleWhen, SessionInfo, WhenDraft } from "../types"
-import { clockText, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime } from "./format"
+import { clockText, describeCondition, describeWhen, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime } from "./format"
 import { Combobox, type ComboOption } from "./combobox"
 import type { ScheduleStore } from "../store"
 
@@ -1260,6 +1260,8 @@ function CopyButton(props: { text: string; label: string }) {
 export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Context }) {
   const { schedule } = props.row
   const outcome = outcomeLabel(schedule.lastOutcome)
+  const ifText = describeCondition(schedule.if)
+  const untilText = describeCondition(schedule.until)
   const model = modelRefLabel(props.row.session?.model)
   const agent = props.row.session?.agent?.trim() ?? ""
   const directory = props.row.session?.location?.directory ?? props.row.session?.directory ?? ""
@@ -1323,11 +1325,27 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Cont
             <CopyButton text={directory} label="目录" />
           </span>
         </Show>
+        <span class="sc-detail-key">触发方式</span>
+        <span class="sc-detail-value">{describeWhen(schedule.when)}</span>
+        <span class="sc-detail-key">时区</span>
+        <span class="sc-detail-value">{schedule.tz || "—"}</span>
+        <Show when={ifText}>
+          <span class="sc-detail-key">执行条件 if</span>
+          <span class="sc-detail-value sc-prompt-text"><span class="sc-detail-text">{ifText}</span></span>
+        </Show>
+        <Show when={untilText}>
+          <span class="sc-detail-key">结束条件 until</span>
+          <span class="sc-detail-value sc-prompt-text"><span class="sc-detail-text">{untilText}</span></span>
+        </Show>
         <span class="sc-detail-key">提示词</span>
         <span class="sc-detail-value sc-prompt-text">
           <span class="sc-detail-text">{schedule.action.prompt}</span>
           <CopyButton text={schedule.action.prompt} label="提示词" />
         </span>
+        <Show when={schedule.endsAt !== undefined}>
+          <span class="sc-detail-key">结束时间</span>
+          <span class="sc-detail-value">{clockText(schedule.endsAt)}</span>
+        </Show>
         <span class="sc-detail-key">已触发</span>
         <span class="sc-detail-value">
           {schedule.runCount} 次
@@ -1351,6 +1369,10 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Cont
         </Show>
         <span class="sc-detail-key">创建于</span>
         <span class="sc-detail-value">{clockText(schedule.time.created)}</span>
+        <Show when={schedule.time.updated !== schedule.time.created}>
+          <span class="sc-detail-key">更新于</span>
+          <span class="sc-detail-value">{clockText(schedule.time.updated)}</span>
+        </Show>
       </div>
     </div>
   )

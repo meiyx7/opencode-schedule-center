@@ -1,44 +1,19 @@
-/** Mirror of the experimental schedule API types from @opencode/client. */
-export type ScheduleWhen =
-  | { type: "in"; in: string; tz?: string }
-  | { type: "at"; at: string; tz?: string }
-  | { type: "every"; every: string; tz?: string }
-  | { type: "cron"; cron: string; tz?: string }
+// Schedule domain types come straight from the official SDK — no local mirror
+// that can drift on upgrade. Re-exported under the same names so callers need
+// no change; add a compile-time alias check below to keep this honest.
+import type {
+  ScheduleCondition as OfficialScheduleCondition,
+  ScheduleInfo as OfficialScheduleInfo,
+  ScheduleOutcome as OfficialScheduleOutcome,
+  ScheduleStatus as OfficialScheduleStatus,
+  ScheduleWhen as OfficialScheduleWhen,
+} from "@opencode/client/promise"
 
-export type ScheduleCondition =
-  | { type: "shell"; run: string; is?: string; matches?: string; changes?: boolean }
-  | { type: "code"; code: string }
-
-export type ScheduleStatus = "active" | "paused" | "done"
-
-export type ScheduleOutcome =
-  | "fired"
-  | "late"
-  | "checked"
-  | "expired"
-  | "skipped"
-  | "disabled"
-  | "failed"
-
-export interface ScheduleInfo {
-  id: string
-  sessionID?: string
-  name?: string
-  when: ScheduleWhen
-  tz: string
-  if?: ScheduleCondition
-  until?: ScheduleCondition
-  action: { type: "prompt"; prompt: string }
-  status: ScheduleStatus
-  nextDueAt?: number
-  endsAt?: number
-  remainingRuns?: number
-  runCount: number
-  lastFiredAt?: number
-  lastOutcome?: ScheduleOutcome
-  lastOutput?: string
-  time: { created: number; updated: number }
-}
+export type ScheduleWhen = OfficialScheduleWhen
+export type ScheduleCondition = OfficialScheduleCondition
+export type ScheduleStatus = OfficialScheduleStatus
+export type ScheduleOutcome = OfficialScheduleOutcome
+export type ScheduleInfo = OfficialScheduleInfo
 
 /** A session's model pick, mirroring the API's ModelRef. */
 export interface SessionModelRef {

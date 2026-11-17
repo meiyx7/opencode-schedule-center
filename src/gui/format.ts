@@ -1,4 +1,4 @@
-import type { ScheduleInfo, ScheduleWhen, WhenDraft } from "../types"
+import type { ScheduleCondition, ScheduleInfo, ScheduleWhen, WhenDraft } from "../types"
 
 /** Parse a duration like "90 seconds", "5 minutes", "2 hours", "3 days" into milliseconds. */
 export function durationMs(text: string): number | null {
@@ -117,16 +117,32 @@ export function clockText(at: number | undefined): string {
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-/** Outcome badge text and tone. */
+/**
+ * Outcome badge text and tone — one entry per official ScheduleOutcome value.
+ * `checked` means "condition was checked", NOT "condition unmet"; the latter is
+ * `skipped`. Keeping them distinct avoids asserting a failure the API didn't report.
+ */
 export function outcomeLabel(outcome: string | undefined): { text: string; tone: "ok" | "warn" | "bad" } | null {
   if (!outcome) return null
   if (outcome === "fired") return { text: "已触发", tone: "ok" }
   if (outcome === "late") return { text: "延迟触发", tone: "warn" }
-  if (outcome === "failed") return { text: "触发失败", tone: "bad" }
+  if (outcome === "checked") return { text: "已检查条件", tone: "warn" }
   if (outcome === "expired") return { text: "已过期", tone: "warn" }
   if (outcome === "skipped") return { text: "已跳过", tone: "warn" }
-  if (outcome === "checked") return { text: "条件未满足", tone: "warn" }
+  if (outcome === "disabled") return { text: "已禁用", tone: "warn" }
+  if (outcome === "failed") return { text: "触发失败", tone: "bad" }
   return { text: outcome, tone: "warn" }
+}
+
+/** Human text for an official schedule condition (shell / code). */
+export function describeCondition(condition: ScheduleCondition | undefined): string {
+  if (!condition) return ""
+  if (condition.type === "code") return `代码：${condition.code}`
+  const parts = [`命令：${condition.run}`]
+  if (condition.is !== undefined) parts.push(`输出为「${condition.is}」`)
+  if (condition.matches !== undefined) parts.push(`匹配「${condition.matches}」`)
+  if (condition.changes) parts.push("输出变化时")
+  return parts.join(" · ")
 }
 
 const CRON_FIELD_RANGES: Array<[number, number]> = [
