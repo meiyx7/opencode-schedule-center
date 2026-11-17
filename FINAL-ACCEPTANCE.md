@@ -1,6 +1,6 @@
-# 最终验收报告（Batch 10 · 发布来源校验与验收材料修正）
+# 最终验收报告（Batch 10.1 · 验收材料同步修正）
 
-本文是分支 `fix/schedule-safety-batch1` 的最终验收依据，覆盖批次 1–10 全部工作，以最新源码与测试为准重写，不沿用批次 6 报告的结论。Batch 10 只补充发布 Tag 来源保护并修正本报告，不改变业务功能、不改业务代码。
+本文是分支 `fix/schedule-safety-batch1` 的最终验收依据，覆盖批次 1–10（含 10.1）全部工作，以最新源码与测试为准重写，不沿用批次 6 报告的结论。Batch 10 只补充发布 Tag 来源保护；Batch 10.1 只同步验收材料（新增 `REPORT-BATCH10.md`、CI 记录更新、PR 描述同步），两者均不改变业务功能、不改业务代码。
 
 ## 1. 批次与提交
 
@@ -16,10 +16,11 @@
 | 7 | 最终验收阻断项修复（并发保护 / 去重 / 错误分类 / 首次扫描语义） | `085495c` |
 | 8 | model / agent 创建确认逻辑修复（TASK-11~13） | `444c416` |
 | 9 | 发布门禁修复（publish.yml 补测试与版本校验）与验收材料收尾 | `59cea9d` |
-| 10 | 发布 Tag 来源校验（仅 main 已含提交可发布）与验收报告修正 | 本提交 |
+| 10 | 发布 Tag 来源校验（仅 main 已含提交可发布） | `db1ee38` |
+| 10.1 | 验收材料同步（REPORT-BATCH10.md、CI 记录更新、PR 描述同步） | 本提交 |
 
-- 分支：`fix/schedule-safety-batch1`。批次 9 推送后相对 main 为 **ahead 10 / behind 0**；Batch 10 本提交推送后为 ahead 11 / behind 0。
-- CI 实际验证记录：`444c416`（批次 8）→ run `44017866072` 全绿；`59cea9d`（批次 9）→ run `44019318036` 全绿（均由 PR #1 的 `pull_request` 事件触发）。Batch 10 提交推送后将触发新 run，最终结论以最新 SHA 的 CI 为准。
+- 分支：`fix/schedule-safety-batch1`。批次 10 推送后相对 main 为 **ahead 11 / behind 0**；Batch 10.1 本提交推送后为 ahead 12 / behind 0。
+- CI 实际验证记录（**全部为 PR CI**，由 PR #1 的 `pull_request` 事件触发）：`444c416`（批次 8）→ run `44017866072` 全绿；`59cea9d`（批次 9）→ run `44019318036` 全绿；`db1ee38`（批次 10，当前 HEAD）→ run `44020160902` 全绿——Typecheck、Test、Build 全部成功。
 - 版本号仍为 `0.1.16`，未合并 main、未发 npm、未建 Tag/Release。
 
 ## 2. 功能验收
@@ -75,14 +76,16 @@
 
 | 项目 | 结果 | 验证渠道 |
 |---|---|---|
-| `npm run typecheck` | 通过，0 错误 | 本机实测（批次 8/9/10 提交）+ CI run `44019318036` |
-| `npm test` | 通过，**96/96**（13 个 suite，零新依赖，全部 Mock client） | 本机实测 + CI run `44019318036` |
-| `npm run build` | 通过，单文件 `dist/gui-experimental.cjs`（108.55 kB / gzip 30.27 kB） | 本机实测 + CI run `44019318036` |
-| CI 实际验证 | run `44019318036`（对应最新已推送 SHA `59cea9d`，PR #1 触发）Typecheck / Test / Build 全绿 | GitHub Actions |
-| 发布工作流来源校验逻辑 | 本机用真实 git 数据演练通过：main 自身对 origin/main `--is-ancestor` 为真（允许路径 exit 0），未合并的分支提交 `59cea9d` 为假（阻断路径 exit 1）；workflow YAML 解析通过 | 本机演练；**Tag 触发的实际发布链路尚未执行**（未创建 Tag，不得视为已通过） |
+| `npm run typecheck` | 通过，0 错误 | 本机实测（批次 8/9/10 提交）+ PR CI run `44020160902` |
+| `npm test` | 通过，**96/96**（13 个 suite，零新依赖，全部 Mock client） | 本机实测 + PR CI run `44020160902` |
+| `npm run build` | 通过，单文件 `dist/gui-experimental.cjs`（108.55 kB / gzip 30.27 kB） | 本机实测 + PR CI run `44020160902` |
+| PR CI 实际验证 | run `44020160902`（对应最新已推送 SHA `db1ee38`，PR #1 触发）Typecheck / Test / Build 全部成功 | GitHub Actions（`pull_request` 事件） |
+| 发布工作流来源校验逻辑 | 本机用真实 git 数据演练通过：main 自身对 origin/main `--is-ancestor` 为真（允许路径 exit 0），未合并的分支提交 `59cea9d` 为假（阻断路径 exit 1）；workflow YAML 解析通过 | 本机演练；PR CI 不覆盖此门禁（publish.yml 仅由 Tag 触发）；**Tag 发布链路尚未执行**（未创建 Tag，不得视为已通过） |
 | README 与实际能力 | 已对齐（批次 6）；批次 7–10 修复未改变对外能力面 | 人工核对 |
 | 官方覆盖报告 | `OFFICIAL-API-COVERAGE.md` 审计缺口已在批次 3–5 闭环 | 人工核对 |
 | 版本号 | `0.1.16`，未改 | 本机读取 package.json |
+
+三类验证渠道的边界：**本机验证**（typecheck/test/build/演练）→ **PR CI 验证**（`pull_request` run，与 CI 配置中的 Typecheck/Test/Build 对应）→ **Tag 发布链路验证**（publish.yml 完整运行，尚未发生）。第三类在创建首个发版 Tag 之前不存在任何成功记录，不得描述为已通过。
 
 ## 7. 发布工作流门禁（批次 9 补测试与版本校验，批次 10 补来源校验）
 
