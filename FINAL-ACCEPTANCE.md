@@ -1,6 +1,6 @@
-# 最终验收报告（Batch 9 · 发布门禁与验收材料收尾）
+# 最终验收报告（Batch 10 · 发布来源校验与验收材料修正）
 
-本文是分支 `fix/schedule-safety-batch1` 的最终验收依据，覆盖批次 1–9 全部工作，以最新源码与测试为准重写，不沿用批次 6 报告的结论。
+本文是分支 `fix/schedule-safety-batch1` 的最终验收依据，覆盖批次 1–10 全部工作，以最新源码与测试为准重写，不沿用批次 6 报告的结论。Batch 10 只补充发布 Tag 来源保护并修正本报告，不改变业务功能、不改业务代码。
 
 ## 1. 批次与提交
 
@@ -15,10 +15,11 @@
 | 6 | 整体验收与 README 对齐 | `c7110f2` |
 | 7 | 最终验收阻断项修复（并发保护 / 去重 / 错误分类 / 首次扫描语义） | `085495c` |
 | 8 | model / agent 创建确认逻辑修复（TASK-11~13） | `444c416` |
-| 9 | 发布门禁修复（publish.yml）与验收材料收尾 | 本提交 |
+| 9 | 发布门禁修复（publish.yml 补测试与版本校验）与验收材料收尾 | `59cea9d` |
+| 10 | 发布 Tag 来源校验（仅 main 已含提交可发布）与验收报告修正 | 本提交 |
 
-- 分支：`fix/schedule-safety-batch1`，相对 main ahead 9 / behind 0（Batch 9 提交推送前）。
-- 批次 8 之前全部提交的 CI 已验证：run `44017866072`（对应 `444c416`）Typecheck / Test / Build 全绿。Batch 9 提交推送后由 PR #1 触发新 run，最终结论以最新 SHA 的 CI 为准。
+- 分支：`fix/schedule-safety-batch1`。批次 9 推送后相对 main 为 **ahead 10 / behind 0**；Batch 10 本提交推送后为 ahead 11 / behind 0。
+- CI 实际验证记录：`444c416`（批次 8）→ run `44017866072` 全绿；`59cea9d`（批次 9）→ run `44019318036` 全绿（均由 PR #1 的 `pull_request` 事件触发）。Batch 10 提交推送后将触发新 run，最终结论以最新 SHA 的 CI 为准。
 - 版本号仍为 `0.1.16`，未合并 main、未发 npm、未建 Tag/Release。
 
 ## 2. 功能验收
@@ -44,7 +45,7 @@
 | 验收项 | 结论 | 依据 |
 |---|---|---|
 | 并发扫描不覆盖本地更新 | 通过 | `mutationSeq` 基准覆盖整个分页窗口 + 保护性合并；扫描期间 create/pause/resume/delete 不丢（批次 7 TASK-07 测试） |
-| 并发创建不产生重复任务 | 按 `draftKey` 的 in-flight Promise Map 管理多草稿，A/B/A 交错、A 失败 B 成功均正确（批次 7 TASK-08 测试） | |
+| 并发创建不产生重复任务 | 通过 | 按 `draftKey` 的 in-flight Promise Map 管理多草稿；A/B/A 交错、A 失败 B 成功互不影响、成功后重提允许新建（批次 7 TASK-08 测试） |
 | 创建异常分类与回滚安全 | 通过 | SDK 2.2.5 真实错误结构分类 7 类；仅"明确拒绝且官方 list 核对为空"才回滚，5xx/超时/网络/未知一律保留会话（批次 7 TASK-09 测试） |
 | 首次扫描语义统一 | 通过 | `attempted` 语义：首次尝试无论成败即结束首次；页面"状态暂不可确认"而非空列表（批次 7 TASK-10 测试） |
 | 超时与未知结果不误回滚 | 通过 | create 异常先 `schedule.list({sessionID})` 核对；核对失败一律保留会话（批次 1/7 测试） |
@@ -70,27 +71,29 @@
 - 插件定位：前台管理与呈现，调度与执行完全依赖官方；不为补功能自建调度器、Cron 执行器或本地任务库。
 - Session 侧仅使用 `session.create/get/switchModel/switchAgent/remove`：remove 仅用于创建失败的安全回滚，删除任务不再触碰承载会话。
 
-## 6. 工程验收
+## 6. 工程验收（区分本机验证与 CI 实际验证）
 
-| 项目 | 结果 |
-|---|---|
-| `npm run typecheck` | 通过，0 错误（Batch 8 提交实测） |
-| `npm test` | 通过，**96/96**（13 个 suite，零新依赖，全部 Mock client） |
-| `npm run build` | 通过，单文件 `dist/gui-experimental.cjs`（108.55 kB / gzip 30.27 kB） |
-| CI | run `44017866072`（`444c416`，PR #1 触发）全绿；Batch 9 提交推送后以最新 run 为准 |
-| README 与实际能力 | 已对齐（批次 6）；Batch 7/8 修复未改变对外能力面 |
-| 官方覆盖报告 | `OFFICIAL-API-COVERAGE.md` 审计缺口已在批次 3–5 闭环 |
-| 版本号 | `0.1.16`，未改 |
+| 项目 | 结果 | 验证渠道 |
+|---|---|---|
+| `npm run typecheck` | 通过，0 错误 | 本机实测（批次 8/9/10 提交）+ CI run `44019318036` |
+| `npm test` | 通过，**96/96**（13 个 suite，零新依赖，全部 Mock client） | 本机实测 + CI run `44019318036` |
+| `npm run build` | 通过，单文件 `dist/gui-experimental.cjs`（108.55 kB / gzip 30.27 kB） | 本机实测 + CI run `44019318036` |
+| CI 实际验证 | run `44019318036`（对应最新已推送 SHA `59cea9d`，PR #1 触发）Typecheck / Test / Build 全绿 | GitHub Actions |
+| 发布工作流来源校验逻辑 | 本机用真实 git 数据演练通过：main 自身对 origin/main `--is-ancestor` 为真（允许路径 exit 0），未合并的分支提交 `59cea9d` 为假（阻断路径 exit 1）；workflow YAML 解析通过 | 本机演练；**Tag 触发的实际发布链路尚未执行**（未创建 Tag，不得视为已通过） |
+| README 与实际能力 | 已对齐（批次 6）；批次 7–10 修复未改变对外能力面 | 人工核对 |
+| 官方覆盖报告 | `OFFICIAL-API-COVERAGE.md` 审计缺口已在批次 3–5 闭环 | 人工核对 |
+| 版本号 | `0.1.16`，未改 | 本机读取 package.json |
 
-## 7. 发布工作流门禁（Batch 9 修复）
+## 7. 发布工作流门禁（批次 9 补测试与版本校验，批次 10 补来源校验）
 
 `.github/workflows/publish.yml` 当前状态：
 
 1. 仅由 `v*` Tag push 触发；`workflow_dispatch` 已删除，无绕过 Tag 的手动发布入口。
-2. 流程依次：Checkout → Node 初始化（含 Trusted Publishing 的 npm 升级）→ `npm ci` → **Tag 与 package.json 版本一致性检查** → `npm run typecheck` → `npm test` → `npm run build` → 目标版本是否已发布检查 → `npm publish --access public --provenance`。
+2. 流程依次：Checkout（`fetch-depth: 0` 全量历史）→ **Tag 来源校验**（`git fetch origin main` 后以 `git merge-base --is-ancestor "$GITHUB_SHA^{commit}" origin/main` 验证；Tag 指向未合并 main 的提交时立即失败，不进入任何发布步骤）→ Node 初始化（含 Trusted Publishing 的 npm 升级）→ `npm ci` → **Tag 与 package.json 版本一致性检查** → `npm run typecheck` → `npm test` → `npm run build` → 目标版本是否已发布检查 → `npm publish --access public --provenance`。
 3. 任何验证步骤失败即终止，不会到达 publish。
 4. 保留 OIDC Trusted Publishing（`id-token: write`），无长期 npm Token；`prepublishOnly` 继续阻止本地 `npm publish` 绕过。
 5. 已知限制：OIDC 不能发布包的首个版本，首次发布需一次性用已登录 npm CLI 完成（工作流注释已注明）。
+6. 验证状态：四个验收场景中，"Tag 指向未合并分支提交须失败"与"Tag 指向 main 已包含提交须放行"两条路径已在本机用真实 git 数据演练（见 §6）；**Tag 触发的完整发布链路尚未实际执行**——本分支未创建任何 Tag，此项在首次真实发版时才得到运行时验证，不得视为已通过。
 
 ## 8. 未解决问题清单
 

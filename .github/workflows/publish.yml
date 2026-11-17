@@ -3,7 +3,8 @@ name: Publish to npm
 # Releases ship only from GitHub Actions: bump the version and push a `v*` tag.
 # `prepublishOnly` blocks local `npm publish`, so this workflow is the only path.
 # There is NO manual entry: `workflow_dispatch` was removed so every publish
-# must come from a version tag, and the tag must match package.json.
+# must come from a version tag, the tag must match package.json, and the tag
+# must point at a commit that is already merged into main.
 #
 # Trusted Publishing:
 #   https://www.npmjs.com/package/opencode-schedule-center/access
@@ -31,6 +32,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag commit is merged into main
+        run: |
+          git fetch origin main
+          sha="$(git rev-parse "$GITHUB_SHA^{commit}")"
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "Tag commit $sha is NOT reachable from origin/main; refusing to publish." >&2
+            echo "Publish is only allowed for tags on commits already merged into main." >&2
+            exit 1
+          fi
+          echo "Tag commit $sha is reachable from origin/main."
 
       - uses: actions/setup-node@v4
         with:
