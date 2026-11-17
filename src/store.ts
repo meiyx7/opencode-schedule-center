@@ -245,14 +245,19 @@ export class ScheduleStore {
       ...(draft.directory ? { location: { directory: draft.directory } } : {}),
     })
 
-    let modelConfirmed = !draft.model
-    if (draft.model && !sameModel(session.model, draft.model)) {
+    // When create already returns the requested value, that IS the confirmed
+    // server state: skip the switch, and never report a false negative that
+    // would roll back a perfectly valid session.
+    let confirmedSession: SessionInfo = session
+    let modelConfirmed = !draft.model || sameModel(session.model, draft.model)
+    if (draft.model && !modelConfirmed) {
       // Some hosts ignore `model` on create; switch explicitly and read back
       // instead of trusting the picked value.
       try {
         await this.client.session.switchModel({ sessionID: session.id, model: draft.model })
         const verify = await this.client.session.get({ sessionID: session.id })
         modelConfirmed = sameModel(verify.model, draft.model)
+        if (modelConfirmed) confirmedSession = { ...confirmedSession, model: verify.model }
       } catch {
         modelConfirmed = false
       }
@@ -268,12 +273,13 @@ export class ScheduleStore {
 
     // Mirror the model read-back for agent: trust the server's session state,
     // not the create argument. Switch explicitly then verify when needed.
-    let agentConfirmed = !draft.agent
-    if (draft.agent && session.agent !== draft.agent) {
+    let agentConfirmed = !draft.agent || session.agent === draft.agent
+    if (draft.agent && !agentConfirmed) {
       try {
         await this.client.session.switchAgent({ sessionID: session.id, agent: draft.agent })
         const verify = await this.client.session.get({ sessionID: session.id })
         agentConfirmed = verify.agent === draft.agent
+        if (agentConfirmed) confirmedSession = { ...confirmedSession, agent: verify.agent }
       } catch {
         agentConfirmed = false
       }
@@ -308,9 +314,9 @@ export class ScheduleStore {
         ...(draft.ends ? { ends: draft.ends } : {}),
       })
     } catch (error) {
-      return this.reconcileCreate(session, draft, error)
+      return this.reconcileCreate(confirmedSession, draft, error)
     }
-    this.commitCreated(session, response, draft)
+    this.commitCreated(confirmedSession, response)
     return response
   }
 
@@ -329,7 +335,7 @@ export class ScheduleStore {
     if (existing && existing.length > 0) {
       // The server did create the task: adopt it and keep its mount session.
       const created = existing.find((item) => item.action?.prompt === draft.prompt) ?? existing[0]
-      this.commitCreated(session, created, draft)
+      this.commitCreated(session, created)
       return created
     }
     if (existing && classifyCreateError(error) === "explicit-rejection") {
@@ -358,8 +364,10 @@ export class ScheduleStore {
     }
   }
 
-  private commitCreated(session: SessionInfo, schedule: ScheduleInfo, draft: CreateDraft): void {
-    const stored: SessionInfo = { ...session, ...(draft.model ? { model: draft.model } : {}) }
+  private commitCreated(session: SessionInfo, schedule: ScheduleInfo): void {
+    // `session` is the confirmed server state from createOnce (create response
+    // or post-switch read-back). Never overwrite it with the request draft.
+    const stored: SessionInfo = { ...session }
     this.sessions.set(session.id, stored)
     const existing = this.scheduleCache.get(session.id) ?? []
     this.scheduleCache.set(

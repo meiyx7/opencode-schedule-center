@@ -1179,3 +1179,140 @@ describe("批次7 / TASK-09：创建异常分类与回滚安全", () => {
     assert.match(thrown.message, /无法确认/)
   })
 })
+
+describe("批次8 / TASK-11~13：model 与 Agent 创建确认", () => {
+  const model = { id: "m1", providerID: "p1" }
+  const otherModel = { id: "other", providerID: "p1" }
+
+  function storeWith(sessionOverrides = {}) {
+    const { client, calls } = createClient({ session: sessionOverrides })
+    return { store: new ScheduleStore(client), calls }
+  }
+
+  it("TASK-11：创建接口返回的 model 已匹配 → 直接成功，不调用 switchModel", async () => {
+    const { store, calls } = storeWith({
+      create: async () => makeSession({ id: "new-session", model }),
+    })
+    const created = await store.createSchedule(draft({ model }))
+    assert.equal(created.id, "t-1")
+    assert.equal(countOf(calls, "session", "switchModel"), 0)
+    assert.equal(hasCall(calls, "session", "get"), false, "已匹配时无需回读")
+    assert.equal(hasCall(calls, "session", "remove"), false)
+  })
+
+  it("TASK-12：创建接口返回的 Agent 已匹配 → 直接成功，不调用 switchAgent", async () => {
+    const { store, calls } = storeWith({
+      create: async () => makeSession({ id: "new-session", agent: "build" }),
+    })
+    const created = await store.createSchedule(draft({ agent: "build" }))
+    assert.equal(created.id, "t-1")
+    assert.equal(countOf(calls, "session", "switchAgent"), 0)
+    assert.equal(hasCall(calls, "session", "get"), false)
+    assert.equal(hasCall(calls, "session", "remove"), false)
+  })
+
+  it("TASK-11：model 不匹配 → switchModel 后回读匹配则创建成功", async () => {
+    const { store, calls } = storeWith({
+      create: async () => makeSession({ id: "new-session", model: otherModel }),
+      get: async (params) => makeSession({ id: params.sessionID, model }),
+    })
+    const created = await store.createSchedule(draft({ model }))
+    assert.equal(created.id, "t-1")
+    assert.equal(countOf(calls, "session", "switchModel"), 1)
+    assert.equal(hasCall(calls, "session", "remove"), false)
+  })
+
+  it("TASK-12：Agent 不匹配 → switchAgent 后回读匹配则创建成功", async () => {
+    const { store, calls } = storeWith({
+      create: async () => makeSession({ id: "new-session", agent: "other" }),
+      get: async (params) => makeSession({ id: params.sessionID, agent: "build" }),
+    })
+    const created = await store.createSchedule(draft({ agent: "build" }))
+    assert.equal(created.id, "t-1")
+    assert.equal(countOf(calls, "session", "switchAgent"), 1)
+    assert.equal(hasCall(calls, "session", "remove"), false)
+  })
+
+  it("TASK-11：model 切换请求失败 → 安全回滚，不创建任务", async () => {
+    const { store, calls } = storeWith({
+      create: async () => makeSession({ id: "new-session", model: otherModel }),
+      switchModel: async () => {
+        throw new Error("switchModel down")
+      },
+    })
+    await assert.rejects(store.createSchedule(draft({ model })), /无法确认模型/)
+    assert.equal(countOf(calls, "session", "remove"), 1)
+    assert.equal(hasCall(calls, "schedule", "create"), false)
+  })
+
+  it("TASK-12：Agent 切换请求失败 → 安全回滚，不创建任务", async () => {
+    const { store, calls } = storeWith({
+      create: async () => makeSession({ id: "new-session", agent: "other" }),
+      switchAgent: async () => {
+        throw new Error("switchAgent down")
+      },
+    })
+    await assert.rejects(store.createSchedule(draft({ agent: "build" })), /无法确认 Agent/)
+    assert.equal(countOf(calls, "session", "remove"), 1)
+    assert.equal(hasCall(calls, "schedule", "create"), false)
+  })
+
+  it("TASK-11：model 切换后回读仍不匹配 → 安全回滚", async () => {
+    const { store, calls } = storeWith({
+      create: async () => makeSession({ id: "new-session", model: otherModel }),
+      get: async (params) => makeSession({ id: params.sessionID, model: { id: "stale", providerID: "p1" } }),
+    })
+    await assert.rejects(store.createSchedule(draft({ model })), /无法确认模型/)
+    assert.equal(countOf(calls, "session", "remove"), 1)
+    assert.equal(hasCall(calls, "schedule", "create"), false)
+  })
+
+  it("TASK-12：Agent 切换后回读仍不匹配 → 安全回滚", async () => {
+    const { store, calls } = storeWith({
+      create: async () => makeSession({ id: "new-session", agent: "other" }),
+      get: async (params) => makeSession({ id: params.sessionID, agent: "still-other" }),
+    })
+    await assert.rejects(store.createSchedule(draft({ agent: "build" })), /无法确认 Agent/)
+    assert.equal(countOf(calls, "session", "remove"), 1)
+    assert.equal(hasCall(calls, "schedule", "create"), false)
+  })
+
+  it("未指定 model / Agent：不触发多余切换或回读", async () => {
+    const { store, calls } = storeWith({
+      create: async () => makeSession({ id: "new-session", model: otherModel, agent: "other" }),
+    })
+    const created = await store.createSchedule(draft())
+    assert.equal(created.id, "t-1")
+    assert.equal(hasCall(calls, "session", "switchModel"), false)
+    assert.equal(hasCall(calls, "session", "switchAgent"), false)
+    assert.equal(hasCall(calls, "session", "get"), false)
+  })
+
+  it("TASK-13：直接接受路径缓存保存服务端实际值而非 draft 对象", async () => {
+    const requestedModel = { id: "m1", providerID: "p1" }
+    const returnedModel = { id: "m1", providerID: "p1", name: "server" }
+    const { store } = storeWith({
+      create: async () => makeSession({ id: "new-session", model: returnedModel, agent: "build" }),
+    })
+    await store.createSchedule(draft({ model: requestedModel, agent: "build" }))
+    const row = store.cachedRows()[0]
+    assert.equal(row.session.model, returnedModel, "必须保存服务端对象本身")
+    assert.notEqual(row.session.model, requestedModel, "不得写入 draft 对象")
+    assert.equal(row.session.agent, "build")
+  })
+
+  it("TASK-13：切换路径缓存使用回读确认值，并保留其他元数据", async () => {
+    const confirmedModel = { id: "m1", providerID: "p1", name: "verified" }
+    const { store, calls } = storeWith({
+      create: async (params) =>
+        makeSession({ id: "new-session", model: otherModel, agent: "other", location: params.location }),
+      get: async (params) => makeSession({ id: params.sessionID, model: confirmedModel, agent: "build" }),
+    })
+    await store.createSchedule(draft({ model, agent: "build", directory: "/work/proj" }))
+    const row = store.cachedRows()[0]
+    assert.equal(row.session.model, confirmedModel, "model 必须来自回读")
+    assert.equal(row.session.agent, "build", "agent 必须来自回读")
+    assert.equal(row.session.location?.directory, "/work/proj", "回读合并不得丢失目录元数据")
+    assert.equal(countOf(calls, "session", "get"), 2, "model 与 agent 各自回读一次")
+  })
+})
