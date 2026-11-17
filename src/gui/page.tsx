@@ -29,6 +29,8 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   const [primed, setPrimed] = createSignal(false)
   const loading = () => !primed()
   const [error, setError] = createSignal("")
+  // A failed sweep leaves the list state unknown — never present it as empty.
+  const [scanFailed, setScanFailed] = createSignal(false)
   // Non-fatal partial-scan notice: some sessions failed to report schedules.
   const [scanPartial, setScanPartial] = createSignal("")
   const [expanded, setExpanded] = createSignal<string>("")
@@ -55,10 +57,14 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
     // are background refreshes and must leave the current rows alone.
     setPrimed(true)
     if (!outcome.ok) {
-      // A background failure must not erase an earlier operation error either.
+      // Unknown is not "no tasks": mark the sweep failed so empty-state copy
+      // never claims the list is complete. A background failure must not erase
+      // an earlier operation error either.
+      setScanFailed(true)
       if (outcome.firstLoad) setError(describeError(outcome.error))
       return
     }
+    setScanFailed(false)
     setError("")
     const result = outcome.data
     setRows(result.rows)
@@ -130,6 +136,8 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
     done: rows().filter((row) => row.schedule.status === "done").length,
     all: rows().length,
   }))
+  // A failed sweep with no cached rows is "unknown", not an empty task list.
+  const dataUnknown = () => scanFailed() && rows().length === 0
 
   const visibleRows = createMemo(() => {
     const current = filter()
@@ -170,7 +178,9 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
             </Show>
             <p class="sc-sub">把重复的事交给 agent：到点唤醒会话执行提示词。任务在本机 OpenCode 后台运行，应用退出后不会触发。</p>
             <div class="sc-hero-meta">
-              <Show when={!loading()} fallback={<span>正在扫描会话…</span>}>
+              <Show when={!loading() && !dataUnknown()} fallback={
+                <span>{loading() ? "正在扫描会话…" : "任务状态暂不可确认，请重试"}</span>
+              }>
                 <span>
                   <b>{rows().filter((row) => row.schedule.status === "active").length}</b> 个进行中
                 </span>
@@ -281,7 +291,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                   onClick={() => setFilter(item.id)}
                 >
                   {item.label}
-                  <span class="sc-filter-count">{counts()[item.id]}</span>
+                  <Show when={!dataUnknown()}><span class="sc-filter-count">{counts()[item.id]}</span></Show>
                 </button>
               )}
             </For>
@@ -301,20 +311,30 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
             fallback={
               <div class="sc-empty sc-empty-slim">
                 <Show
-                  when={search().trim()}
+                  when={!dataUnknown()}
                   fallback={
                     <>
-                      <p class="sc-empty-title">没有{FILTERS.find((item) => item.id === filter())?.label}的任务</p>
-                      <button type="button" class="sc-btn" onClick={() => setFilter("all")}>
-                        查看全部
-                      </button>
+                      <p class="sc-empty-title">任务状态暂不可确认</p>
+                      <p class="sc-empty-hint">扫描未能完成，这不代表没有任务；请点「刷新」重试。</p>
                     </>
                   }
                 >
-                  <p class="sc-empty-title">没有匹配「{search().trim()}」的任务</p>
-                  <button type="button" class="sc-btn" onClick={() => setSearch("")}>
-                    清除搜索
-                  </button>
+                  <Show
+                    when={search().trim()}
+                    fallback={
+                      <>
+                        <p class="sc-empty-title">没有{FILTERS.find((item) => item.id === filter())?.label}的任务</p>
+                        <button type="button" class="sc-btn" onClick={() => setFilter("all")}>
+                          查看全部
+                        </button>
+                      </>
+                    }
+                  >
+                    <p class="sc-empty-title">没有匹配「{search().trim()}」的任务</p>
+                    <button type="button" class="sc-btn" onClick={() => setSearch("")}>
+                      清除搜索
+                    </button>
+                  </Show>
                 </Show>
               </div>
             }
