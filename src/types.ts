@@ -68,10 +68,19 @@ export interface ScheduleRow {
 }
 
 export type WhenDraft =
-  | { kind: "in"; in: string }
+  | { kind: "in"; in: string; tz?: string }
   | { kind: "at"; at: string; tz?: string }
   | { kind: "every"; every: string; tz?: string }
   | { kind: "cron"; cron: string; tz?: string }
+
+/**
+ * Condition shape accepted by the official create payload. Unlike the returned
+ * `ScheduleCondition` it carries no `type` discriminator — the API tells shell
+ * from code by the presence of `run` vs `code`.
+ */
+export type ConditionDraft =
+  | { run: string; is?: string; matches?: string; changes?: boolean }
+  | { code: string }
 
 export interface CreateDraft {
   sessionID: string
@@ -79,6 +88,8 @@ export interface CreateDraft {
   when: WhenDraft
   prompt: string
   ends?: { after?: string; at?: string; times?: number }
+  if?: ConditionDraft
+  until?: ConditionDraft
   model?: { id: string; providerID: string; variant?: string }
   directory?: string
   agent?: string

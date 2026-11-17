@@ -245,15 +245,11 @@ export function nextCronRuns(expr: string, from: number, count: number): number[
   return runs
 }
 
-/** Convert a form draft into the API's when shape. */
-export function draftToWhen(draft: WhenDraft): ScheduleWhen {
-  if (draft.kind === "in") return { type: "in", in: draft.in }
-  if (draft.kind === "at") return { type: "at", at: draft.at, ...(draft.tz ? { tz: draft.tz } : {}) }
-  if (draft.kind === "every") return { type: "every", every: draft.every, ...(draft.tz ? { tz: draft.tz } : {}) }
-  return { type: "cron", cron: draft.cron, ...(draft.tz ? { tz: draft.tz } : {}) }
-}
-
-/** Preview timestamps for the preview strip of the create form. */
+/**
+ * Reference-only preview timestamps for the create form. These are LOCAL
+ * estimates — the authoritative next fire time is always the server's
+ * `nextDueAt`. Callers must label these as "预计/参考", never as an official value.
+ */
 export function previewRuns(draft: WhenDraft, now: number, count = 5): number[] {
   if (draft.kind === "cron" && isValidCron(draft.cron)) return nextCronRuns(draft.cron, now, count)
   if (draft.kind === "in") {

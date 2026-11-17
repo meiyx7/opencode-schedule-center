@@ -266,8 +266,10 @@ export class ScheduleStore {
               : when.kind === "every"
                 ? { every: when.every }
                 : { cron: when.cron }),
-          ...(when.kind === "in" ? {} : when.tz ? { tz: when.tz } : {}),
+          ...(when.tz ? { tz: when.tz } : {}),
         },
+        ...(draft.if ? { if: draft.if } : {}),
+        ...(draft.until ? { until: draft.until } : {}),
         ...(draft.ends ? { ends: draft.ends } : {}),
       })
     } catch (error) {
@@ -393,6 +395,8 @@ function draftKey(draft: CreateDraft): string {
     prompt: draft.prompt,
     when: draft.when,
     ends: draft.ends,
+    if: draft.if,
+    until: draft.until,
     model: draft.model,
     agent: draft.agent,
     directory: draft.directory,

@@ -620,3 +620,68 @@ describe("部分失败处理 / TASK-05", () => {
     assert.equal(hasCall(calls, "session", "remove"), false)
   })
 })
+
+describe("批次3：官方创建参数透传", () => {
+  function createCall(overrides = {}) {
+    const { client, calls } = createClient(overrides)
+    return { client, calls, params: () => calls.find((c) => c.group === "schedule" && c.name === "create")?.args[0] }
+  }
+
+  it("in 也透传可选 tz", async () => {
+    const { client, params } = createCall()
+    await new ScheduleStore(client).createSchedule(
+      draft({ when: { kind: "in", in: "30 minutes", tz: "Asia/Shanghai" } }),
+    )
+    assert.equal(params().when.in, "30 minutes")
+    assert.equal(params().when.tz, "Asia/Shanghai")
+  })
+
+  it("未提供 tz 时不发送该字段", async () => {
+    const { client, params } = createCall()
+    await new ScheduleStore(client).createSchedule(draft())
+    assert.equal("tz" in params().when, false)
+  })
+
+  it("if / until 按官方入参结构透传（不带 type 判别字段）", async () => {
+    const { client, params } = createCall()
+    await new ScheduleStore(client).createSchedule(
+      draft({
+        if: { run: "git status --porcelain", changes: true },
+        until: { code: "return dayOfWeek() === 5" },
+      }),
+    )
+    assert.deepEqual(params().if, { run: "git status --porcelain", changes: true })
+    assert.deepEqual(params().until, { code: "return dayOfWeek() === 5" })
+    assert.equal("type" in params().if, false)
+    assert.equal("type" in params().until, false)
+  })
+
+  it("ends 三种结束条件各自原样透传", async () => {
+    for (const ends of [{ times: 5 }, { after: "2 hours" }, { at: "2026-12-01T09:00:00+08:00" }]) {
+      const { client, params } = createCall()
+      await new ScheduleStore(client).createSchedule(draft({ ends }))
+      assert.deepEqual(params().ends, ends)
+    }
+  })
+
+  it("different ends / conditions count as distinct drafts for duplicate-submit", async () => {
+    const { client, calls } = createCall()
+    const store = new ScheduleStore(client)
+    const a = store.createSchedule(draft({ ends: { times: 5 } }))
+    const b = store.createSchedule(draft({ ends: { times: 10 } }))
+    await Promise.all([a, b])
+    assert.equal(countOf(calls, "schedule", "create"), 2)
+  })
+
+  it("same full draft (incl. tz/ends/if) still coalesces to one create", async () => {
+    const { client, calls } = createCall()
+    const store = new ScheduleStore(client)
+    const full = draft({
+      when: { kind: "every", every: "5 minutes", tz: "Asia/Shanghai" },
+      ends: { after: "2 hours" },
+      if: { run: "test -f /tmp/flag" },
+    })
+    await Promise.all([store.createSchedule(full), store.createSchedule(full)])
+    assert.equal(countOf(calls, "schedule", "create"), 1)
+  })
+})
