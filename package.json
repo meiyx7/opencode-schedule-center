@@ -49,6 +49,7 @@
     "build": "vite build",
     "dev": "vite build --watch",
     "typecheck": "tsc --noEmit",
+    "test": "esbuild src/store.ts src/scan-coordinator.ts src/gui/format.ts --format=esm --platform=node --outdir=test/.build --log-level=warning && node --test test/*.test.mjs",
     "prepublishOnly": "node scripts/ensure-ci-publish.mjs && npm run build"
   }
 }

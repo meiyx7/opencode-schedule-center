@@ -866,6 +866,49 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   margin: 0;
 }
 
+/* End condition (after/at/times) inside the preview aside. */
+.sc-end {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px dashed var(--sc-border);
+}
+.sc-end-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.sc-end-kinds { display: flex; flex-wrap: wrap; gap: 4px; }
+.sc-end .sc-limit {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+  flex-wrap: wrap;
+}
+.sc-end .sc-limit .sc-input { width: 92px; text-align: left; }
+.sc-end .sc-datetime { flex: 0 1 168px; height: 28px; }
+
+/* Timezone input under the four trigger modes. */
+.sc-tz-field { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.sc-tz-field .sc-input { height: 34px; }
+
+/* if / until raw condition editors. */
+.sc-conditions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--sc-border);
+}
+.sc-conditions-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.sc-condition { display: flex; flex-direction: column; gap: 8px; }
+.sc-condition-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sc-condition-title { font-weight: 600; font-size: 12px; }
+.sc-condition-fields { display: flex; flex-direction: column; gap: 6px; }
+.sc-condition-fields .sc-input { height: 32px; }
+.sc-condition-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.sc-condition-row .sc-input { flex: 1 1 160px; }
+.sc-condition-check { display: inline-flex; align-items: center; gap: 6px; color: var(--sc-muted); font-size: 11px; }
+
 /* Execution: prompt and advanced options. */
 .sc-field {
   display: flex;

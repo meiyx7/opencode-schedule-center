@@ -5,9 +5,14 @@ import { clockText, describeWhen, outcomeLabel, relativeTime } from "./format"
 import { ScheduleConfig, ScheduleDetail, ScheduleForm, Icon } from "./form"
 import { CSS } from "./styles"
 import type { ScheduleStore } from "../store"
+import { createScanCoordinator } from "../scan-coordinator"
 
 type Tab = "list" | "create"
 type Filter = "active" | "paused" | "done" | "all"
+
+function describeError(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
 
 const FILTERS: Array<{ id: Filter; label: string }> = [
   { id: "active", label: "进行中" },
@@ -24,6 +29,8 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   const [primed, setPrimed] = createSignal(false)
   const loading = () => !primed()
   const [error, setError] = createSignal("")
+  // A failed sweep leaves the list state unknown — never present it as empty.
+  const [scanFailed, setScanFailed] = createSignal(false)
   // Non-fatal partial-scan notice: some sessions failed to report schedules.
   const [scanPartial, setScanPartial] = createSignal("")
   const [expanded, setExpanded] = createSignal<string>("")
@@ -41,22 +48,32 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   const timer = setInterval(() => setNowTick((value) => value + 1), 1000)
   onCleanup(() => clearInterval(timer))
 
+  // Every refresh entry point shares one in-flight sweep. On failure the last
+  // good rows stay on screen; only a failed first load raises a blocking error.
+  const coordinator = createScanCoordinator(() => props.store.listAll())
   const load = async () => {
-    setError("")
-    try {
-      const result = await props.store.listAll()
-      setRows(result.rows)
-      // 部分会话扫描失败时如实声明结果不完整，而不是让总数显得可信。
-      setScanPartial(
-        result.failedSessions > 0
-          ? `有 ${result.failedSessions} 个会话读取失败，任务列表可能不完整；可点「刷新」重试。`
-          : "",
-      )
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setPrimed(true)
+    const outcome = await coordinator.refresh()
+    // The first attempt is over whether it succeeded or failed; later failures
+    // are background refreshes and must leave the current rows alone.
+    setPrimed(true)
+    if (!outcome.ok) {
+      // Unknown is not "no tasks": mark the sweep failed so empty-state copy
+      // never claims the list is complete. A background failure must not erase
+      // an earlier operation error either.
+      setScanFailed(true)
+      if (outcome.firstLoad) setError(describeError(outcome.error))
+      return
     }
+    setScanFailed(false)
+    setError("")
+    const result = outcome.data
+    setRows(result.rows)
+    // Never present a partial sweep as a complete one: count + truncation are
+    // surfaced verbatim, and a background failure above did not clear `rows`.
+    const notices: string[] = []
+    if (result.failures.length > 0) notices.push(`${result.failures.length} 个会话读取失败`)
+    if (result.truncated) notices.push("会话分页达到安全上限，仍有未扫描会话")
+    setScanPartial(notices.length > 0 ? `${notices.join("；")}，任务列表可能不完整；可点「刷新」重试。` : "")
   }
 
   void load()
@@ -90,8 +107,14 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
-      // The local view may be stale after a failure; reconcile quietly.
-      void load()
+      // The operation failed, but the server may have applied it anyway. Read
+      // back ONLY this task with the official get — never re-sweep every
+      // session (that would churn caches and could overwrite other edits).
+      try {
+        setRows(await props.store.reconcile(row.schedule.id))
+      } catch {
+        // Reconcile itself failed: keep the last known rows, stay quiet.
+      }
     } finally {
       setBusyId("")
       setConfirming("")
@@ -119,6 +142,8 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
     done: rows().filter((row) => row.schedule.status === "done").length,
     all: rows().length,
   }))
+  // A failed sweep with no cached rows is "unknown", not an empty task list.
+  const dataUnknown = () => scanFailed() && rows().length === 0
 
   const visibleRows = createMemo(() => {
     const current = filter()
@@ -159,7 +184,9 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
             </Show>
             <p class="sc-sub">把重复的事交给 agent：到点唤醒会话执行提示词。任务在本机 OpenCode 后台运行，应用退出后不会触发。</p>
             <div class="sc-hero-meta">
-              <Show when={!loading()} fallback={<span>正在扫描会话…</span>}>
+              <Show when={!loading() && !dataUnknown()} fallback={
+                <span>{loading() ? "正在扫描会话…" : "任务状态暂不可确认，请重试"}</span>
+              }>
                 <span>
                   <b>{rows().filter((row) => row.schedule.status === "active").length}</b> 个进行中
                 </span>
@@ -270,7 +297,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                   onClick={() => setFilter(item.id)}
                 >
                   {item.label}
-                  <span class="sc-filter-count">{counts()[item.id]}</span>
+                  <Show when={!dataUnknown()}><span class="sc-filter-count">{counts()[item.id]}</span></Show>
                 </button>
               )}
             </For>
@@ -290,20 +317,30 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
             fallback={
               <div class="sc-empty sc-empty-slim">
                 <Show
-                  when={search().trim()}
+                  when={!dataUnknown()}
                   fallback={
                     <>
-                      <p class="sc-empty-title">没有{FILTERS.find((item) => item.id === filter())?.label}的任务</p>
-                      <button type="button" class="sc-btn" onClick={() => setFilter("all")}>
-                        查看全部
-                      </button>
+                      <p class="sc-empty-title">任务状态暂不可确认</p>
+                      <p class="sc-empty-hint">扫描未能完成，这不代表没有任务；请点「刷新」重试。</p>
                     </>
                   }
                 >
-                  <p class="sc-empty-title">没有匹配「{search().trim()}」的任务</p>
-                  <button type="button" class="sc-btn" onClick={() => setSearch("")}>
-                    清除搜索
-                  </button>
+                  <Show
+                    when={search().trim()}
+                    fallback={
+                      <>
+                        <p class="sc-empty-title">没有{FILTERS.find((item) => item.id === filter())?.label}的任务</p>
+                        <button type="button" class="sc-btn" onClick={() => setFilter("all")}>
+                          查看全部
+                        </button>
+                      </>
+                    }
+                  >
+                    <p class="sc-empty-title">没有匹配「{search().trim()}」的任务</p>
+                    <button type="button" class="sc-btn" onClick={() => setSearch("")}>
+                      清除搜索
+                    </button>
+                  </Show>
                 </Show>
               </div>
             }
@@ -332,7 +369,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                     <div class="sc-card-title">
                       <span class="sc-name">{row.schedule.name?.trim() || row.schedule.action.prompt.slice(0, 40)}</span>
                       <span class={`sc-badge sc-status-${row.schedule.status}`}>
-                        {row.schedule.status === "active" ? "已启用" : row.schedule.status === "paused" ? "已暂停" : "已结束"}
+                        {row.schedule.status === "active" ? "进行中" : row.schedule.status === "paused" ? "已暂停" : "已结束"}
                       </span>
                     </div>
                     <div class="sc-card-actions">
@@ -354,6 +391,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                           type="button"
                           class="sc-btn sc-btn-small sc-btn-primary"
                           disabled={busyId() === row.schedule.id}
+                          title="恢复后按官方规则继续：一次性任务若在暂停期到期将触发一次；重复任务从下一时间槽继续，不逐次补跑"
                           onClick={(event) => {
                             event.stopPropagation()
                             void act(row, "resume")
@@ -367,7 +405,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                         class="sc-btn sc-btn-small sc-btn-danger"
                         classList={{ "confirm-armed": confirming() === row.schedule.id }}
                         disabled={busyId() === row.schedule.id}
-                        title="删除这条定时任务；专用挂载会话一并删除"
+                        title="删除这条定时任务"
                         onClick={(event) => {
                           event.stopPropagation()
                           if (confirming() === row.schedule.id) {
