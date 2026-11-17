@@ -2,6 +2,8 @@ name: Publish to npm
 
 # Releases ship only from GitHub Actions: bump the version and push a `v*` tag.
 # `prepublishOnly` blocks local `npm publish`, so this workflow is the only path.
+# There is NO manual entry: `workflow_dispatch` was removed so every publish
+# must come from a version tag, and the tag must match package.json.
 #
 # Trusted Publishing:
 #   https://www.npmjs.com/package/opencode-schedule-center/access
@@ -15,7 +17,6 @@ name: Publish to npm
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -37,16 +38,6 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
 
-      - name: Verify tag matches package version
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          tag="${GITHUB_REF#refs/tags/v}"
-          version="$(node -p "require('./package.json').version")"
-          if [ "$tag" != "$version" ]; then
-            echo "Tag v$tag does not match package.json $version" >&2
-            exit 1
-          fi
-
       - name: Use npm with Trusted Publishing support
         run: npm install -g npm@latest
 
@@ -56,18 +47,36 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Verify tag matches package version
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "Tag v$tag does not match package.json $version" >&2
+            exit 1
+          fi
+
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Test
+        run: npm test
 
       - name: Build
         run: npm run build
 
-      - name: Publish
+      - name: Check whether target version is already published
         run: |
           name="$(node -p "require('./package.json').name")"
           version="$(node -p "require('./package.json').version")"
           if npm view "$name@$version" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
-            echo "$name@$version is already published; nothing to do."
-            exit 0
+            echo "ALREADY_PUBLISHED=$name@$version" >> "$GITHUB_ENV"
+          else
+            echo "ALREADY_PUBLISHED=" >> "$GITHUB_ENV"
           fi
-          npm publish --access public --provenance
+
+      - name: Publish
+        # A re-pushed tag for an already-published version is a no-op, not a
+        # failure; anything unpublishable above already aborted the job.
+        if: env.ALREADY_PUBLISHED == ''
+        run: npm publish --access public --provenance
