@@ -14,7 +14,11 @@ export type ScanOutcome<T> =
  */
 export function createScanCoordinator<T>(scan: () => Promise<T>) {
   let inFlight: Promise<ScanOutcome<T>> | undefined
-  let primed = false
+  // "First load" describes the ATTEMPT, not a successful result. Once any
+  // scan has started, later failures are background refreshes — even when the
+  // very first attempt failed. This keeps the page's primed/scanFailed states
+  // in lockstep with the coordinator's firstLoad flag.
+  let attempted = false
 
   return {
     get busy(): boolean {
@@ -24,10 +28,10 @@ export function createScanCoordinator<T>(scan: () => Promise<T>) {
       // A second caller waits for the running scan instead of starting another
       // sweep, which also means no older request can overwrite a newer one.
       if (inFlight) return inFlight
-      const firstLoad = !primed
+      const firstLoad = !attempted
+      attempted = true
       const attempt = scan().then(
         (data): ScanOutcome<T> => {
-          primed = true
           inFlight = undefined
           return { ok: true, data }
         },

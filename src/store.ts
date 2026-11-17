@@ -32,8 +32,8 @@ export class ScheduleStore {
   private scheduleCache = new Map<string, ScheduleInfo[]>()
   /** Cached model catalog; one fetch per dialog lifetime is enough. */
   private catalog: ModelProviderGroup[] | undefined
-  /** A second submit of the same draft shares the first create. */
-  private inflightCreate: { key: string; promise: Promise<ScheduleInfo> } | undefined
+  /** Each draft key keeps its own in-flight create, so A/B/A stays distinct. */
+  private inflightCreates = new Map<string, Promise<ScheduleInfo>>()
   /** Bumped by local cache writes so a sweep never overwrites newer local data. */
   private mutationSeq = 0
 
@@ -74,9 +74,11 @@ export class ScheduleStore {
 
   /** Fetch schedules for every known session and return active-first rows. */
   async listAll(): Promise<ListResult> {
+    // Baseline BEFORE the first await: a create landing anywhere during
+    // session pagination (not just schedule fetching) must be detectable.
+    const seqAtStart = this.mutationSeq
     const { sessions, truncated } = await this.fetchAllSessions()
     const ids = [...sessions.keys()]
-    const seqAtStart = this.mutationSeq
 
     // Build into locals and commit once at the end: a failed sweep keeps the
     // last good cache, and the page keeps showing the previous rows.
@@ -110,17 +112,27 @@ export class ScheduleStore {
       }
     }
 
-    this.sessions = sessions
     if (this.mutationSeq === seqAtStart) {
+      // Clean sweep: the snapshot is newer than nothing, adopt it in full —
+      // including session metadata (title / model / agent / directory).
+      this.sessions = sessions
       this.scheduleCache = nextCache
     } else {
-      // A pause/resume/create/delete landed mid-sweep. That write is newer:
-      // adopt only cache entries the live cache has not seen yet.
+      // A create/pause/resume/delete landed mid-sweep. Those local writes are
+      // newer than this snapshot. Never let stale scan data roll them back:
+      //   - schedules: update only entries the live cache has NOT seen;
+      //   - sessions: never drop a live session (a just-created mount session
+      //     carries its model/agent/directory), only add ones we lack.
       for (const [id, schedules] of nextCache) {
         if (!this.scheduleCache.has(id)) this.scheduleCache.set(id, schedules)
       }
+      for (const [id, session] of sessions) {
+        if (!this.sessions.has(id)) this.sessions.set(id, session)
+      }
     }
-    return { rows: this.rowsFrom(sessions, this.scheduleCache), failures, truncated }
+    // Always rebuild from the live sessions map so a newly created mount
+    // session keeps its metadata instead of falling back to a stale snapshot.
+    return { rows: this.rowsFrom(this.sessions, this.scheduleCache), failures, truncated }
   }
 
   private rowsFrom(sessions: Map<string, SessionInfo>, cache: Map<string, ScheduleInfo[]>): ScheduleRow[] {
@@ -209,16 +221,19 @@ export class ScheduleStore {
 
   /** Create a dedicated mount session so the schedule has a home to wake. */
   async createSchedule(draft: CreateDraft): Promise<ScheduleInfo> {
-    // Double submit: later callers share the in-flight promise instead of
-    // starting a second session/schedule pair.
+    // Double submit: later calls with the SAME draft share one in-flight
+    // promise; different drafts run independently (A/B/A, A-fails-B-succeeds).
     const key = draftKey(draft)
-    if (this.inflightCreate?.key === key) return this.inflightCreate.promise
+    const existing = this.inflightCreates.get(key)
+    if (existing) return existing
     const task = this.createOnce(draft)
-    this.inflightCreate = { key, promise: task }
+    this.inflightCreates.set(key, task)
     try {
       return await task
     } finally {
-      if (this.inflightCreate?.promise === task) this.inflightCreate = undefined
+      // Clear only this draft's entry, and only if it is still ours — a newer
+      // submission of the same key must not be evicted by an older one.
+      if (this.inflightCreates.get(key) === task) this.inflightCreates.delete(key)
     }
   }
 
@@ -317,8 +332,11 @@ export class ScheduleStore {
       this.commitCreated(session, created, draft)
       return created
     }
-    if (existing && !isIndeterminateError(error)) {
-      // Explicit failure + confirmed empty list: safe to roll back.
+    if (existing && classifyCreateError(error) === "explicit-rejection") {
+      // ONLY a provable business rejection (4xx with a stable SDK tag/status)
+      // plus a confirmed empty list is safe to roll back. Every uncertain
+      // class — 5xx, timeout, abort, network, parse, unknown — keeps the
+      // session: a lost response can hide a write even when the list is empty.
       await this.rollbackSession(session.id, error)
       throw error
     }
@@ -452,11 +470,92 @@ function draftKey(draft: CreateDraft): string {
   })
 }
 
-/** A lost response usually surfaces as a timeout/abort/network error, not a business rejection. */
-function isIndeterminateError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  const text = `${error.name} ${error.message}`.toLowerCase()
-  return ["timeout", "timed out", "abort", "network", "econn", "fetch failed"].some((token) => text.includes(token))
+/**
+ * How a failed `schedule.create` is classified, based on the ACTUAL error
+ * shapes @opencode/client 2.2.5 throws (verified against the shipped SDK):
+ *  - declared business errors are Error instances carrying a `_tag` property
+ *    and `name === _tag` (SDK: `Object.assign(new Error(message), body)`):
+ *    InvalidRequestError=400, UnauthorizedError=401, ForbiddenError=403,
+ *    ServiceUnavailableError=503, UnknownError, etc. `_tag` is read BEFORE
+ *    `instanceof Error` so these are never mistaken for generic errors;
+ *  - transport / undeclared HTTP statuses are `ClientError` Errors with a
+ *    `reason` (`UnexpectedStatus` carrying a numeric `cause.status`,
+ *    `Transport`, `MalformedResponse`, `UnsupportedContentType`, ...);
+ *  - fetch/network/abort/parse may also surface as native Error subclasses.
+ *
+ * Only `explicit-rejection` may trigger rollback (and only with a confirmed
+ * empty list). Everything else is indeterminate — the server may have written
+ * the task despite a broken response.
+ */
+export type CreateErrorKind =
+  | "explicit-rejection"
+  | "server-error"
+  | "timeout"
+  | "abort"
+  | "network"
+  | "parse-error"
+  | "unknown"
+
+/** Tags the SDK maps from definitive client-side rejections (4xx). */
+const EXPLICIT_REJECTION_TAGS = new Set([
+  "InvalidRequestError", // 400
+  "UnauthorizedError", // 401
+  "ForbiddenError", // 403
+  "ConflictError", // 409
+  "InvalidCursorError",
+  "SessionBusyError",
+])
+/** Tags the SDK maps from server-side failures — outcome is not knowable. */
+const SERVER_ERROR_TAGS = new Set([
+  "ServiceUnavailableError", // 503
+  "RpcError",
+  "RpcInternalError",
+  "UnknownError",
+  "CommandExecutionError",
+  "ProviderRequestError",
+])
+
+export function classifyCreateError(error: unknown): CreateErrorKind {
+  if (error === null || error !== Object(error)) return "unknown"
+
+  const tag = (error as { _tag?: unknown })._tag
+  if (typeof tag === "string") {
+    if (EXPLICIT_REJECTION_TAGS.has(tag)) return "explicit-rejection"
+    if (SERVER_ERROR_TAGS.has(tag)) return "server-error"
+    // Any other SDK business tag (e.g. a *NotFoundError) is a rejected
+    // request, not a lost response — but it is not a create validation
+    // rejection either. Treat conservatively as indeterminate.
+    return "unknown"
+  }
+
+  // SDK `ClientError`: reason + numeric cause.status, no message guessing.
+  const name = (error as { name?: unknown }).name
+  const reason = (error as { reason?: unknown }).reason
+  if (name === "ClientError" && reason !== undefined) {
+    if (reason === "UnexpectedStatus") {
+      const status = (error as { cause?: { status?: unknown } }).cause?.status
+      if (typeof status === "number") {
+        if (status >= 500) return "server-error"
+        if (status === 408) return "timeout"
+        if (status === 429) return "unknown" // rate limit: outcome unknowable
+        if (status >= 400 && status < 500) return "explicit-rejection"
+      }
+      return "unknown"
+    }
+    if (reason === "Transport") return "network"
+    if (reason === "MalformedResponse" || reason === "UnsupportedContentType") return "parse-error"
+    return "unknown"
+  }
+
+  // Native Error subclasses from fetch/abort/parse layers.
+  if (error instanceof Error) {
+    if (error.name === "TimeoutError") return "timeout"
+    if (error.name === "AbortError") return "abort"
+    if (error.name === "SyntaxError") return "parse-error"
+    if (error.name === "TypeError") return "network" // undici "fetch failed"
+    return "unknown"
+  }
+  return "unknown"
 }
 
 /** Active first, then by next due time; ended tasks last. */
@@ -470,7 +569,14 @@ function sortRows(rows: ScheduleRow[]): ScheduleRow[] {
 }
 
 function describeError(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
+  if (cause instanceof Error) return cause.message
+  // SDK business errors are plain objects carrying `message` (+ `_tag`).
+  if (cause !== null && typeof cause === "object" && "message" in cause) {
+    const message = (cause as { message?: unknown }).message
+    const tag = (cause as { _tag?: unknown })._tag
+    return typeof tag === "string" ? `${tag}: ${String(message)}` : String(message)
+  }
+  return String(cause)
 }
 
 function toModelChoice(model: ModelInfo): ModelChoice {

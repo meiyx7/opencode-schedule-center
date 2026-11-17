@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { ScheduleStore } from "./.build/store.js"
+import { ScheduleStore, classifyCreateError } from "./.build/store.js"
 
 function deferred() {
   let resolve
@@ -170,13 +170,18 @@ describe("创建与回滚 / TASK-02", () => {
     assert.equal(hasCall(calls, "session", "remove"), false)
   })
 
-  it("Schedule 明确失败：等待回滚完成后才抛出原错误", async () => {
+  it("Schedule 明确拒绝：等待回滚完成后才抛出原错误", async () => {
     const gate = deferred()
     let sessionRemoved = false
+    // SDK declared errors are Error instances carrying _tag (Object.assign).
+    const rejection = Object.assign(new Error("create rejected"), {
+      _tag: "InvalidRequestError",
+      name: "InvalidRequestError",
+    })
     const { client, calls } = createClient({
       schedule: {
         create: async () => {
-          throw new Error("create failed")
+          throw rejection
         },
         list: async () => [],
       },
@@ -194,7 +199,7 @@ describe("创建与回滚 / TASK-02", () => {
     assert.equal(countOf(calls, "session", "remove"), 1)
     assert.equal(sessionRemoved, false, "回滚未完成时不得 settle")
     gate.resolve()
-    await assert.rejects(pending, /create failed/)
+    await assert.rejects(pending, (error) => error === rejection)
     assert.equal(sessionRemoved, true, "回滚必须被等待")
   })
 
@@ -237,7 +242,10 @@ describe("创建与回滚 / TASK-02", () => {
     const { client } = createClient({
       schedule: {
         create: async () => {
-          throw new Error("original create failure")
+          throw Object.assign(new Error("original create rejection"), {
+            _tag: "InvalidRequestError",
+            name: "InvalidRequestError",
+          })
         },
         list: async () => [],
       },
@@ -253,7 +261,7 @@ describe("创建与回滚 / TASK-02", () => {
       (error) =>
         error.message.includes("承载会话清理失败") &&
         error.message.includes("cleanup failure") &&
-        error.message.includes("original create failure"),
+        error.message.includes("original create rejection"),
     )
   })
 
@@ -786,5 +794,388 @@ describe("批次5：生命周期操作与按需对账", () => {
     await assert.rejects(store.createSchedule(draft({ agent: "build" })), /无法确认 Agent/)
     assert.equal(hasCall(calls, "schedule", "create"), false, "不得创建 schedule")
     assert.equal(countOf(calls, "session", "remove"), 1)
+  })
+})
+
+
+
+describe("批次7 / TASK-07：扫描期间的并发变更不得丢失", () => {
+  /**
+   * A store whose session sweep can be gated from the second scan onward.
+   * The first scan seeds the cache; `sweep()` then starts scan #2, blocks
+   * after page 1, runs `between`, releases page 2, and returns the result.
+   * The snapshot always reports s1/t1 = active, so a local mutation during
+   * the sweep is only preserved if the stale snapshot cannot overwrite it.
+   */
+  function gatedStore() {
+    const page1 = deferred()
+    const page2 = deferred()
+    let gate = false
+    let page = 0
+    const { client, calls } = createClient({
+      session: {
+        list: async ({ cursor }) => {
+          const first = !cursor
+          if (gate && first) {
+            page1.resolve()
+            await page2.promise
+          }
+          page += 1
+          if (first) return { data: [makeSession({ id: "s1" })], cursor: { next: "c2" } }
+          return { data: [makeSession({ id: "s2" })], cursor: {} }
+        },
+        // Return a model that does NOT match the draft so createOnce takes the
+        // switchModel + get verification path; `get` below returns the matching
+        // model, making the create succeed. `location` rides along as metadata.
+        create: async (params) =>
+          makeSession({
+            id: "new-session",
+            model: { id: "unset", providerID: "p1" },
+            agent: "build",
+            location: params.location,
+          }),
+        get: async (params) =>
+          makeSession({ id: params.sessionID, model: { id: "m1", providerID: "p1" } }),
+      },
+      schedule: {
+        list: async ({ sessionID }) => [makeSchedule({ id: `t-${sessionID}`, sessionID, status: "active" })],
+        create: async (params) =>
+          makeSchedule({ id: "t-created", sessionID: params.sessionID, prompt: params.prompt, status: "active" }),
+        pause: async ({ scheduleID }) => makeSchedule({ id: scheduleID, sessionID: "s1", status: "paused" }),
+        resume: async ({ scheduleID }) => makeSchedule({ id: scheduleID, sessionID: "s1", status: "active" }),
+        delete: async () => {},
+      },
+    })
+    const store = new ScheduleStore(client)
+    return { store, calls, enableGate: () => { gate = true }, page1, page2 }
+  }
+
+  async function interleave(g, between) {
+    g.enableGate()
+    const sweeping = g.store.listAll()
+    await g.page1.promise // page 1 served, page 2 blocked
+    const extra = await between(g.store)
+    g.page2.resolve()
+    const result = await sweeping
+    return { result, extra }
+  }
+
+  it("第一页后创建任务：任务仍存在，新 Session 的 model/agent/directory 元数据保留", async () => {
+    const g = gatedStore()
+    await g.store.listAll() // seed
+    const model = { id: "m1", providerID: "p1" }
+    const { result, extra } = await interleave(g, (s) =>
+      s.createSchedule(draft({ name: "新建", model, directory: "/work/proj" })),
+    )
+    assert.equal(extra.id, "t-created")
+    const row = result.rows.find((r) => r.schedule.id === "t-created")
+    assert.ok(row, "扫描期间创建的任务不得丢失")
+    assert.deepEqual(row.session?.model, model, "新 Session 的 model 元数据不得被快照覆盖")
+    assert.equal(row.session?.agent, "build", "新 Session 的 agent 元数据不得被快照覆盖")
+    assert.equal(row.session?.location?.directory, "/work/proj", "新 Session 的目录元数据不得丢失")
+    assert.equal(g.store.cachedRows().some((r) => r.schedule.id === "t-created"), true)
+  })
+
+  it("扫描期间 pause 不被旧快照覆盖", async () => {
+    const g = gatedStore()
+    await g.store.listAll()
+    await interleave(g, (s) => s.pause("t-s1"))
+    const row = g.store.cachedRows().find((r) => r.schedule.id === "t-s1")
+    assert.equal(row.schedule.status, "paused", "pause 结果必须保留，不被快照的 active 覆盖")
+  })
+
+  it("扫描期间 resume 不被旧快照覆盖", async () => {
+    const g = gatedStore()
+    await g.store.listAll()
+    // Make local state paused first, then resume mid-sweep while snapshot says active.
+    await g.store.pause("t-s1")
+    const { result } = await interleave(g, (s) => s.resume("t-s1"))
+    const row = result.rows.find((r) => r.schedule.id === "t-s1")
+    assert.equal(row.schedule.status, "active")
+    assert.equal(g.store.cachedRows().find((r) => r.schedule.id === "t-s1").schedule.status, "active")
+  })
+
+  it("扫描期间 delete 不被扫描结果复活", async () => {
+    const g = gatedStore()
+    await g.store.listAll()
+    await interleave(g, (s) => s.remove("t-s1"))
+    assert.equal(g.store.cachedRows().some((r) => r.schedule.id === "t-s1"), false, "已删除任务不得被快照复活")
+  })
+
+  it("扫描结束后再次刷新，正常采用最新官方数据", async () => {
+    let serverStatus = "active"
+    const { client } = createClient({
+      session: { list: async () => ({ data: [makeSession({ id: "s1" })], cursor: {} }) },
+      schedule: { list: async () => [makeSchedule({ id: "t1", sessionID: "s1", status: serverStatus })] },
+    })
+    const store = new ScheduleStore(client)
+    assert.equal((await store.listAll()).rows[0].schedule.status, "active")
+    serverStatus = "paused"
+    assert.equal((await store.listAll()).rows[0].schedule.status, "paused", "无并发变更时必须采用官方最新数据")
+  })
+})
+
+describe("批次7 / TASK-08：多草稿并发去重（按 draftKey 管理在途 Promise）", () => {
+  /** A create that can be held open by a gate, one gate per prompt. */
+  function gatedCreateStore() {
+    const gates = new Map()
+    const gateFor = (prompt) => {
+      if (!gates.has(prompt)) gates.set(prompt, deferred())
+      return gates.get(prompt)
+    }
+    const { client, calls } = createClient({
+      session: { create: async () => makeSession({ id: "new-session" }) },
+      schedule: {
+        create: async (params) => {
+          await gateFor(params.prompt).promise
+          return makeSchedule({ id: `t-${params.prompt}`, sessionID: params.sessionID, prompt: params.prompt })
+        },
+        list: async () => [],
+      },
+    })
+    return { store: new ScheduleStore(client), calls, gateFor }
+  }
+
+  it("A/A：同一草稿只创建一次，共享同一 Promise", async () => {
+    const { store, calls, gateFor } = gatedCreateStore()
+    const a1 = store.createSchedule(draft({ prompt: "A" }))
+    const a2 = store.createSchedule(draft({ prompt: "A" }))
+    gateFor("A").resolve()
+    const [x, y] = await Promise.all([a1, a2])
+    assert.equal(countOf(calls, "schedule", "create"), 1)
+    assert.equal(countOf(calls, "session", "create"), 1)
+    assert.equal(x, y)
+  })
+
+  it("A/B：不同草稿各创建一次", async () => {
+    const { store, calls, gateFor } = gatedCreateStore()
+    const a = store.createSchedule(draft({ prompt: "A" }))
+    const b = store.createSchedule(draft({ prompt: "B" }))
+    gateFor("A").resolve()
+    gateFor("B").resolve()
+    await Promise.all([a, b])
+    assert.equal(countOf(calls, "schedule", "create"), 2)
+  })
+
+  it("A/B/A：A 只创建一次，B 一次", async () => {
+    const { store, calls, gateFor } = gatedCreateStore()
+    const a1 = store.createSchedule(draft({ prompt: "A" }))
+    const b = store.createSchedule(draft({ prompt: "B" }))
+    const a2 = store.createSchedule(draft({ prompt: "A" }))
+    gateFor("A").resolve()
+    gateFor("B").resolve()
+    const [x, , y] = await Promise.all([a1, b, a2])
+    assert.equal(countOf(calls, "schedule", "create"), 2)
+    assert.equal(x.id, y.id, "两次 A 必须拿到同一个结果")
+    assert.equal(x, y)
+  })
+
+  it("A 失败、B 成功：互不影响，且失败后可重新提交 A", async () => {
+    const gates = new Map()
+    const gateFor = (prompt) => {
+      if (!gates.has(prompt)) gates.set(prompt, deferred())
+      return gates.get(prompt)
+    }
+    let aAttempts = 0
+    const { client, calls } = createClient({
+      session: { create: async () => makeSession({ id: "new-session" }) },
+      schedule: {
+        create: async (params) => {
+          await gateFor(params.prompt).promise
+          if (params.prompt === "A") {
+            aAttempts += 1
+            if (aAttempts === 1) {
+              throw Object.assign(new Error("A rejected"), { _tag: "InvalidRequestError", name: "InvalidRequestError" })
+            }
+          }
+          return makeSchedule({ id: `t-${params.prompt}`, sessionID: params.sessionID, prompt: params.prompt })
+        },
+        list: async () => [],
+      },
+    })
+    const store = new ScheduleStore(client)
+    const a1 = store.createSchedule(draft({ prompt: "A" }))
+    const b = store.createSchedule(draft({ prompt: "B" }))
+    gateFor("A").resolve()
+    gateFor("B").resolve()
+    const bResult = await b
+    await assert.rejects(a1, (e) => e._tag === "InvalidRequestError")
+    assert.equal(bResult.id, "t-B", "B 不受 A 失败影响")
+    assert.equal(countOf(calls, "schedule", "create"), 2)
+
+    // After A settled (failed), resubmitting A must be allowed (its key cleared).
+    const a2 = store.createSchedule(draft({ prompt: "A" }))
+    gateFor("A").resolve()
+    assert.equal((await a2).id, "t-A")
+    assert.equal(countOf(calls, "schedule", "create"), 3)
+  })
+
+  it("A 成功后再次提交 A：允许重新创建（不再复用已 settle 的 Promise）", async () => {
+    const { store, calls, gateFor } = gatedCreateStore()
+    const a1 = store.createSchedule(draft({ prompt: "A" }))
+    gateFor("A").resolve()
+    await a1
+    assert.equal(countOf(calls, "schedule", "create"), 1)
+    const a2 = store.createSchedule(draft({ prompt: "A" }))
+    gateFor("A").resolve()
+    const result = await a2
+    assert.equal(result.id, "t-A")
+    assert.equal(countOf(calls, "schedule", "create"), 2, "成功后再提交应创建新任务")
+  })
+
+  it("同一草稿包含 tz/ends/if/until 时仍正确去重", async () => {
+    const { store, calls, gateFor } = gatedCreateStore()
+    const full = draft({
+      when: { kind: "every", every: "5 minutes", tz: "Asia/Shanghai" },
+      ends: { after: "2 hours" },
+      if: { run: "test -f /tmp/flag" },
+      until: { code: "return true" },
+    })
+    const p1 = store.createSchedule(full)
+    const p2 = store.createSchedule({ ...full }) // 结构相同，键相同
+    gateFor("do it").resolve()
+    const [x, y] = await Promise.all([p1, p2])
+    assert.equal(countOf(calls, "schedule", "create"), 1)
+    assert.equal(x, y)
+  })
+})
+
+describe("批次7 / TASK-09：创建异常分类与回滚安全", () => {
+  // SDK 2.2.5 error shapes: declared business errors are plain {_tag,message};
+  // transport/undeclared statuses are Error instances with name="ClientError"
+  // plus a `reason` and (for UnexpectedStatus) a numeric cause.status.
+  // SDK 2.2.5 builds declared errors via Object.assign(new Error(msg), body)
+  // and sets name=_tag — an Error instance that also carries `_tag`.
+  const tagged = (tag, message = "x") => Object.assign(new Error(message), { _tag: tag, name: tag })
+  const clientError = (reason, status) => {
+    const e = new Error(`ClientError: ${reason}`)
+    e.name = "ClientError"
+    e.reason = reason
+    if (status !== undefined) e.cause = { status }
+    return e
+  }
+  const nativeError = (name) => {
+    const e = new Error(name)
+    e.name = name
+    return e
+  }
+
+  it("HTTP 400 明确拒绝（InvalidRequestError）→ explicit-rejection", () => {
+    const error = tagged("InvalidRequestError")
+    assert.ok(error instanceof Error, "SDK declared 错误是 Error 实例")
+    assert.equal(classifyCreateError(error), "explicit-rejection", "_tag 必须先于 instanceof Error 读取")
+  })
+  it("HTTP 401/403 权限拒绝 → explicit-rejection", () => {
+    assert.equal(classifyCreateError(tagged("UnauthorizedError")), "explicit-rejection")
+    assert.equal(classifyCreateError(tagged("ForbiddenError")), "explicit-rejection")
+  })
+  it("HTTP 408 请求超时 → timeout（未知）", () => {
+    assert.equal(classifyCreateError(clientError("UnexpectedStatus", 408)), "timeout")
+  })
+  it("HTTP 429 限流 → unknown（未知）", () => {
+    assert.equal(classifyCreateError(clientError("UnexpectedStatus", 429)), "unknown")
+  })
+  it("HTTP 500 → server-error", () => {
+    assert.equal(classifyCreateError(tagged("UnknownError")), "server-error")
+    assert.equal(classifyCreateError(clientError("UnexpectedStatus", 500)), "server-error")
+  })
+  it("HTTP 502/503 → server-error", () => {
+    assert.equal(classifyCreateError(clientError("UnexpectedStatus", 502)), "server-error")
+    assert.equal(classifyCreateError(tagged("ServiceUnavailableError")), "server-error")
+    assert.equal(classifyCreateError(clientError("UnexpectedStatus", 503)), "server-error")
+  })
+  it("TimeoutError / AbortError → 未知类别", () => {
+    assert.equal(classifyCreateError(nativeError("TimeoutError")), "timeout")
+    assert.equal(classifyCreateError(nativeError("AbortError")), "abort")
+  })
+  it("网络连接中断（ClientError/Transport 与 fetch failed）→ network", () => {
+    assert.equal(classifyCreateError(clientError("Transport")), "network")
+    assert.equal(classifyCreateError(nativeError("TypeError")), "network")
+  })
+  it("响应解析失败（MalformedResponse/UnsupportedContentType/SyntaxError）→ parse-error", () => {
+    assert.equal(classifyCreateError(clientError("MalformedResponse")), "parse-error")
+    assert.equal(classifyCreateError(clientError("UnsupportedContentType")), "parse-error")
+    assert.equal(classifyCreateError(nativeError("SyntaxError")), "parse-error")
+  })
+  it("SDK 错误结构不完整 / 无法识别 → unknown", () => {
+    assert.equal(classifyCreateError(new Error("create failed")), "unknown", "普通 Error 不得靠消息猜状态")
+    assert.equal(classifyCreateError({}), "unknown")
+    assert.equal(classifyCreateError(null), "unknown")
+    assert.equal(classifyCreateError("500 Internal Server Error"), "unknown", "不得从字符串猜 5xx")
+  })
+
+  /** Drive a create whose schedule.create throws `error`, with a given list result. */
+  async function createWith(error, listImpl) {
+    const { client, calls } = createClient({
+      schedule: {
+        create: async () => {
+          throw error
+        },
+        list: listImpl ?? (async () => []),
+      },
+    })
+    const store = new ScheduleStore(client)
+    let thrown
+    try {
+      await store.createSchedule(draft())
+    } catch (e) {
+      thrown = e
+    }
+    return { calls, thrown }
+  }
+
+  it("明确拒绝 + list 核对为空 → 允许回滚并抛原错误", async () => {
+    const rejection = tagged("InvalidRequestError", "bad when")
+    const { calls, thrown } = await createWith(rejection, async () => [])
+    assert.equal(countOf(calls, "session", "remove"), 1, "明确拒绝且核对为空才回滚")
+    assert.equal(thrown, rejection)
+  })
+
+  it("5xx + list 核对为空 → 绝不回滚，保留会话", async () => {
+    for (const error of [clientError("UnexpectedStatus", 500), clientError("UnexpectedStatus", 503), tagged("UnknownError")]) {
+      const { calls, thrown } = await createWith(error, async () => [])
+      assert.equal(countOf(calls, "session", "remove"), 0, "5xx 不得触发危险回滚")
+      assert.match(thrown.message, /无法确认/)
+    }
+  })
+
+  it("超时/Abort/网络/解析失败 + 空列表 → 一律保留会话", async () => {
+    for (const error of [
+      nativeError("TimeoutError"),
+      nativeError("AbortError"),
+      clientError("Transport"),
+      clientError("MalformedResponse"),
+    ]) {
+      const { calls } = await createWith(error, async () => [])
+      assert.equal(countOf(calls, "session", "remove"), 0)
+    }
+  })
+
+  it("schedule.list 核对命中 → 认领任务并保留会话（无论原始错误类别）", async () => {
+    const { calls, store } = await (async () => {
+      const c = createClient({
+        schedule: {
+          create: async () => {
+            throw clientError("UnexpectedStatus", 502)
+          },
+          list: async ({ sessionID }) => [makeSchedule({ id: "adopted", sessionID, prompt: "do it" })],
+        },
+      })
+      const s = new ScheduleStore(c.client)
+      const created = await s.createSchedule(draft())
+      assert.equal(created.id, "adopted")
+      return { calls: c.calls, store: s }
+    })()
+    assert.equal(countOf(calls, "schedule", "list"), 1)
+    assert.equal(countOf(calls, "session", "remove"), 0)
+    assert.equal(store.cachedRows().length, 1)
+  })
+
+  it("明确拒绝但 list 核对失败 → 保留会话（无法确认是否创建）", async () => {
+    const { calls, thrown } = await createWith(tagged("InvalidRequestError"), async () => {
+      throw new Error("list down")
+    })
+    assert.equal(countOf(calls, "session", "remove"), 0)
+    assert.match(thrown.message, /无法确认/)
   })
 })

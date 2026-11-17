@@ -96,18 +96,18 @@ describe("全量扫描单飞 / TASK-04", () => {
     assert.equal(outcome.firstLoad, false, "已有可用数据时失败属于后台刷新")
   })
 
-  it("首次失败后重试仍是首次加载，直到首次成功才降级为后台失败", async () => {
+  it("首次失败即结束首次语义：后续重试失败标记为后台失败", async () => {
     let state = "fail"
     const coordinator = createScanCoordinator(async () => {
       if (state === "fail") throw new Error("boom")
       return ["ok"]
     })
     const first = await coordinator.refresh()
-    assert.equal(first.firstLoad, true)
+    assert.equal(first.firstLoad, true, "第一次尝试属于首次加载")
     const retry = await coordinator.refresh()
-    assert.equal(retry.firstLoad, true, "从未成功过，重试仍属于首次加载")
+    assert.equal(retry.firstLoad, false, "首次尝试（即便失败）已结束，重试属于后台刷新")
     state = "ok"
-    assert.equal((await coordinator.refresh()).ok, true)
+    assert.deepEqual(await coordinator.refresh(), { ok: true, data: ["ok"] })
     state = "fail"
     const later = await coordinator.refresh()
     assert.equal(later.firstLoad, false)
@@ -121,5 +121,83 @@ describe("全量扫描单飞 / TASK-04", () => {
     await pending
     assert.equal(coordinator.busy, false)
     assert.equal((await coordinator.refresh()).ok, true)
+  })
+})
+
+describe("批次7 / TASK-10：首次扫描语义", () => {
+  it("1. 首次扫描失败，firstLoad=true", async () => {
+    const coordinator = createScanCoordinator(async () => {
+      throw new Error("first down")
+    })
+    const outcome = await coordinator.refresh()
+    assert.equal(outcome.ok, false)
+    assert.equal(outcome.firstLoad, true)
+  })
+
+  it("2. 第二次扫描失败，firstLoad=false", async () => {
+    const coordinator = createScanCoordinator(async () => {
+      throw new Error("still down")
+    })
+    await coordinator.refresh()
+    const second = await coordinator.refresh()
+    assert.equal(second.firstLoad, false, "首次尝试已结束，再失败属于后台刷新")
+  })
+
+  it("3. 首次失败后第二次成功，正常返回数据", async () => {
+    let fail = true
+    const coordinator = createScanCoordinator(async () => {
+      if (fail) {
+        fail = false
+        throw new Error("down")
+      }
+      return ["rows"]
+    })
+    assert.equal((await coordinator.refresh()).ok, false)
+    const second = await coordinator.refresh()
+    assert.deepEqual(second, { ok: true, data: ["rows"] })
+  })
+
+  it("4. 成功后再次失败，保留旧数据语义（协调器不产出数据、firstLoad=false）", async () => {
+    let fail = false
+    const coordinator = createScanCoordinator(async () => {
+      if (fail) throw new Error("later down")
+      return ["kept-rows"]
+    })
+    assert.deepEqual(await coordinator.refresh(), { ok: true, data: ["kept-rows"] })
+    fail = true
+    const later = await coordinator.refresh()
+    assert.equal(later.ok, false)
+    assert.equal(later.firstLoad, false)
+    assert.equal("data" in later, false, "失败结果不携带数据，页面据此保留上次 rows")
+  })
+
+  it("5. busy 状态正确归位", async () => {
+    const gate = deferred()
+    const coordinator = createScanCoordinator(async () => {
+      await gate.promise
+      return "ok"
+    })
+    assert.equal(coordinator.busy, false)
+    const pending = coordinator.refresh()
+    assert.equal(coordinator.busy, true)
+    gate.resolve()
+    await pending
+    assert.equal(coordinator.busy, false)
+  })
+
+  it("6. 多次并发刷新仍只有一次扫描", async () => {
+    let count = 0
+    const gate = deferred()
+    const coordinator = createScanCoordinator(async () => {
+      count += 1
+      await gate.promise
+      return count
+    })
+    const results = [coordinator.refresh(), coordinator.refresh(), coordinator.refresh(), coordinator.refresh()]
+    assert.equal(count, 1)
+    gate.resolve()
+    const outcomes = await Promise.all(results)
+    assert.equal(count, 1)
+    assert.ok(outcomes.every((o) => o.data === 1))
   })
 })
