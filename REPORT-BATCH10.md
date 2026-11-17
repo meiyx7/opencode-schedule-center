@@ -53,7 +53,7 @@ fi
 | 项 | 值 |
 |---|---|
 | Run | `44020160902` |
-| 对应提交 | `db1ee38`（本批提交，当前 HEAD） |
+| 对应提交 | `db1ee38`（Batch 10 代码提交；Batch 10.1 `7ebc9c1` 与 10.2 为后续文档提交） |
 | 事件 | `pull_request`（PR #1 触发） |
 | 结果 | success，Typecheck / Test / Build 全部通过 |
 
