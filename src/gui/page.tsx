@@ -5,9 +5,14 @@ import { clockText, describeWhen, outcomeLabel, relativeTime } from "./format"
 import { ScheduleConfig, ScheduleDetail, ScheduleForm, Icon } from "./form"
 import { CSS } from "./styles"
 import type { ScheduleStore } from "../store"
+import { createScanCoordinator } from "../scan-coordinator"
 
 type Tab = "list" | "create"
 type Filter = "active" | "paused" | "done" | "all"
+
+function describeError(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
 
 const FILTERS: Array<{ id: Filter; label: string }> = [
   { id: "active", label: "进行中" },
@@ -41,22 +46,28 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   const timer = setInterval(() => setNowTick((value) => value + 1), 1000)
   onCleanup(() => clearInterval(timer))
 
+  // Every refresh entry point shares one in-flight sweep. On failure the last
+  // good rows stay on screen; only a failed first load raises a blocking error.
+  const coordinator = createScanCoordinator(() => props.store.listAll())
   const load = async () => {
-    setError("")
-    try {
-      const result = await props.store.listAll()
-      setRows(result.rows)
-      // 部分会话扫描失败时如实声明结果不完整，而不是让总数显得可信。
-      setScanPartial(
-        result.failedSessions > 0
-          ? `有 ${result.failedSessions} 个会话读取失败，任务列表可能不完整；可点「刷新」重试。`
-          : "",
-      )
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setPrimed(true)
+    const outcome = await coordinator.refresh()
+    // The first attempt is over whether it succeeded or failed; later failures
+    // are background refreshes and must leave the current rows alone.
+    setPrimed(true)
+    if (!outcome.ok) {
+      // A background failure must not erase an earlier operation error either.
+      if (outcome.firstLoad) setError(describeError(outcome.error))
+      return
     }
+    setError("")
+    const result = outcome.data
+    setRows(result.rows)
+    // Never present a partial sweep as a complete one: count + truncation are
+    // surfaced verbatim, and a background failure above did not clear `rows`.
+    const notices: string[] = []
+    if (result.failures.length > 0) notices.push(`${result.failures.length} 个会话读取失败`)
+    if (result.truncated) notices.push("会话分页达到安全上限，仍有未扫描会话")
+    setScanPartial(notices.length > 0 ? `${notices.join("；")}，任务列表可能不完整；可点「刷新」重试。` : "")
   }
 
   void load()
@@ -367,7 +378,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                         class="sc-btn sc-btn-small sc-btn-danger"
                         classList={{ "confirm-armed": confirming() === row.schedule.id }}
                         disabled={busyId() === row.schedule.id}
-                        title="删除这条定时任务；专用挂载会话一并删除"
+                        title="删除这条定时任务"
                         onClick={(event) => {
                           event.stopPropagation()
                           if (confirming() === row.schedule.id) {

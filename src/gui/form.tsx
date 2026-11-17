@@ -249,9 +249,13 @@ export function ScheduleForm(props: {
   })
   const previewRunsLive = previews
 
+  // Synchronous guard: signal batching must never open a window for a second
+  // submit. The store also coalesces duplicate creates as a second line of defense.
+  let submitting = false
   const submit = async () => {
     // 非法次数绝不能静默落成“不限次”：提交前再挡一次。
-    if (!draft() || !canSubmit()) return
+    if (!draft() || !canSubmit() || submitting) return
+    submitting = true
     setBusy(true)
     setError("")
     try {
@@ -279,6 +283,7 @@ export function ScheduleForm(props: {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
+      submitting = false
       setBusy(false)
     }
   }
