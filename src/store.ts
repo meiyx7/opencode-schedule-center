@@ -251,6 +251,26 @@ export class ScheduleStore {
       throw reason
     }
 
+    // Mirror the model read-back for agent: trust the server's session state,
+    // not the create argument. Switch explicitly then verify when needed.
+    let agentConfirmed = !draft.agent
+    if (draft.agent && session.agent !== draft.agent) {
+      try {
+        await this.client.session.switchAgent({ sessionID: session.id, agent: draft.agent })
+        const verify = await this.client.session.get({ sessionID: session.id })
+        agentConfirmed = verify.agent === draft.agent
+      } catch {
+        agentConfirmed = false
+      }
+    }
+    if (draft.agent && !agentConfirmed) {
+      const reason = new Error(
+        `无法确认 Agent ${draft.agent} 已生效，任务未创建；请稍后重试或不指定 Agent。`,
+      )
+      await this.rollbackSession(session.id, reason)
+      throw reason
+    }
+
     const when: WhenDraft = draft.when
     let response: ScheduleInfo
     try {
@@ -379,6 +399,35 @@ export class ScheduleStore {
    */
   async remove(scheduleID: string, _sessionID?: string): Promise<void> {
     await this.client.experimental.schedule.delete({ scheduleID })
+    this.dropFromCache(scheduleID)
+  }
+
+  /**
+   * Re-read one task with the official `schedule.get` after a failed operation.
+   * Unlike a full sweep this touches only the affected task:
+   * - still present  -> adopt the server's fresh state into the cache;
+   * - not found       -> the task is gone, drop only this cache entry;
+   * - unreadable      -> outcome unknown, keep the last known state untouched.
+   * It never deletes sessions or changes other tasks.
+   */
+  async reconcile(scheduleID: string): Promise<ScheduleRow[]> {
+    let fresh: ScheduleInfo
+    try {
+      fresh = await this.client.experimental.schedule.get({ scheduleID })
+    } catch (error) {
+      // Duck-type the official ScheduleNotFoundError via its stable `_tag`
+      // (a runtime import from the SDK is not available inside plugin GUIs).
+      if ((error as { _tag?: string } | null)?._tag === "ScheduleNotFoundError") {
+        this.dropFromCache(scheduleID)
+      }
+      // Any other failure is indeterminate: keep the previous rows.
+      return this.cachedRows()
+    }
+    return this.patchLocal(scheduleID, (schedule) => Object.assign(schedule, fresh))
+  }
+
+  /** Remove one cached task (and only it); no-op when already absent. */
+  private dropFromCache(scheduleID: string): void {
     for (const [sessionID, schedules] of this.scheduleCache) {
       if (!schedules.some((schedule) => schedule.id === scheduleID)) continue
       this.scheduleCache.set(sessionID, schedules.filter((schedule) => schedule.id !== scheduleID))

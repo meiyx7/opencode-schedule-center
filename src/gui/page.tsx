@@ -107,8 +107,14 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
-      // The local view may be stale after a failure; reconcile quietly.
-      void load()
+      // The operation failed, but the server may have applied it anyway. Read
+      // back ONLY this task with the official get — never re-sweep every
+      // session (that would churn caches and could overwrite other edits).
+      try {
+        setRows(await props.store.reconcile(row.schedule.id))
+      } catch {
+        // Reconcile itself failed: keep the last known rows, stay quiet.
+      }
     } finally {
       setBusyId("")
       setConfirming("")
@@ -385,6 +391,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                           type="button"
                           class="sc-btn sc-btn-small sc-btn-primary"
                           disabled={busyId() === row.schedule.id}
+                          title="恢复后按官方规则继续：一次性任务若在暂停期到期将触发一次；重复任务从下一时间槽继续，不逐次补跑"
                           onClick={(event) => {
                             event.stopPropagation()
                             void act(row, "resume")

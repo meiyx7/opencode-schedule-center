@@ -58,11 +58,13 @@ function createClient(overrides = {}) {
     create: async () => makeSession({ id: "new-session" }),
     get: async (params) => makeSession({ id: params.sessionID }),
     switchModel: async () => ({}),
+    switchAgent: async () => ({}),
     remove: async () => {},
   }
   const baseSchedule = {
     create: async (params) => makeSchedule({ sessionID: params.sessionID }),
     list: async () => [],
+    get: async (params) => makeSchedule({ id: params.scheduleID }),
     delete: async () => {},
     pause: async (params) => makeSchedule({ id: params.scheduleID }),
     resume: async (params) => makeSchedule({ id: params.scheduleID }),
@@ -683,5 +685,106 @@ describe("批次3：官方创建参数透传", () => {
     })
     await Promise.all([store.createSchedule(full), store.createSchedule(full)])
     assert.equal(countOf(calls, "schedule", "create"), 1)
+  })
+})
+
+describe("批次5：生命周期操作与按需对账", () => {
+  async function primedStore(scheduleOverrides = {}, getOverride) {
+    const { client, calls } = createClient({
+      session: { list: async () => ({ data: [makeSession({ id: "ses-1" })], cursor: {} }) },
+      schedule: {
+        list: async () => [makeSchedule({ id: "t1", sessionID: "ses-1", ...scheduleOverrides })],
+        ...(getOverride ? { get: getOverride } : {}),
+      },
+    })
+    const store = new ScheduleStore(client)
+    await store.listAll()
+    return { store, calls }
+  }
+
+  it("pause 以官方返回值更新缓存，失败则保留原状态", async () => {
+    const { store, calls } = await primedStore()
+    const paused = await store.pause("t1")
+    assert.equal(paused.find((r) => r.schedule.id === "t1").schedule.status, "active") // mock pause returns active
+    assert.equal(countOf(calls, "schedule", "pause"), 1)
+
+    const c = createClient({
+      session: { list: async () => ({ data: [makeSession({ id: "ses-1" })], cursor: {} }) },
+      schedule: {
+        list: async () => [makeSchedule({ id: "t1", sessionID: "ses-1" })],
+        pause: async () => { throw new Error("pause down") },
+      },
+    })
+    const failing = new ScheduleStore(c.client)
+    await failing.listAll()
+    await assert.rejects(failing.pause("t1"), /pause down/)
+    assert.equal(failing.cachedRows().length, 1, "失败后保留原任务")
+  })
+
+  it("delete 只官方删除，不删 session；失败保留任务", async () => {
+    const { store, calls } = await primedStore()
+    await store.remove("t1", "ses-1")
+    assert.equal(countOf(calls, "schedule", "delete"), 1)
+    assert.equal(hasCall(calls, "session", "remove"), false, "不得删承载会话")
+    assert.equal(store.cachedRows().length, 0)
+
+    const c = createClient({
+      session: { list: async () => ({ data: [makeSession({ id: "ses-1" })], cursor: {} }) },
+      schedule: {
+        list: async () => [makeSchedule({ id: "t1", sessionID: "ses-1" })],
+        delete: async () => { throw new Error("delete down") },
+      },
+    })
+    const s = new ScheduleStore(c.client)
+    await s.listAll()
+    await assert.rejects(s.remove("t1"), /delete down/)
+    assert.equal(s.cachedRows().length, 1, "删除失败保留任务")
+  })
+
+  it("reconcile：任务仍在时以官方 get 值更新缓存", async () => {
+    const { store, calls } = await primedStore({ status: "active" }, async () => makeSchedule({ id: "t1", sessionID: "ses-1", status: "paused" }))
+    const rows = await store.reconcile("t1")
+    assert.equal(countOf(calls, "schedule", "get"), 1)
+    assert.equal(rows.find((r) => r.schedule.id === "t1").schedule.status, "paused")
+  })
+
+  it("reconcile：官方 not found（_tag）时只移除该任务", async () => {
+    const { store } = await primedStore({}, async () => {
+      const e = new Error("not found"); e._tag = "ScheduleNotFoundError"; throw e
+    })
+    const rows = await store.reconcile("t1")
+    assert.equal(rows.length, 0)
+  })
+
+  it("reconcile：无法确认时保留上次数据，不改状态", async () => {
+    const { store } = await primedStore({ status: "active" }, async () => { throw new Error("network timeout") })
+    const rows = await store.reconcile("t1")
+    assert.equal(rows.length, 1)
+    assert.equal(rows.find((r) => r.schedule.id === "t1").schedule.status, "active")
+  })
+
+  it("agent 指定后回读确认：不生效则 switchAgent 并再次核对", async () => {
+    const { client, calls } = createClient({
+      session: {
+        create: async () => makeSession({ id: "new-session", agent: "other" }),
+        get: async () => makeSession({ id: "new-session", agent: "build" }),
+      },
+    })
+    const store = new ScheduleStore(client)
+    await store.createSchedule(draft({ agent: "build" }))
+    assert.equal(countOf(calls, "session", "switchAgent"), 1)
+  })
+
+  it("agent 回读失败：等待回滚并抛错，不创建任务", async () => {
+    const { client, calls } = createClient({
+      session: {
+        create: async () => makeSession({ id: "new-session", agent: "other" }),
+        get: async () => makeSession({ id: "new-session", agent: "other" }), // switch didn't apply
+      },
+    })
+    const store = new ScheduleStore(client)
+    await assert.rejects(store.createSchedule(draft({ agent: "build" })), /无法确认 Agent/)
+    assert.equal(hasCall(calls, "schedule", "create"), false, "不得创建 schedule")
+    assert.equal(countOf(calls, "session", "remove"), 1)
   })
 })
