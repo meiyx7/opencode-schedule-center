@@ -124,8 +124,11 @@ export function ScheduleForm(props: {
   const [variant, setVariant] = createSignal("")
   const [modelPicker, setModelPicker] = createSignal(false)
   const [modelHint, setModelHint] = createSignal("")
-  const [agents, setAgents] = createSignal<Array<{ name: string; description?: string }>>([])
+  const [agents, setAgents] = createSignal<Array<{ id: string; name: string; description?: string }>>([])
+  // Selected value is the stable agent id (what the session API expects);
+  // every UI label resolves it back to the human-friendly display name.
   const [agent, setAgent] = createSignal("")
+  const agentLabel = () => agents().find((item) => item.id === agent())?.name ?? agent()
   const [directories, setDirectories] = createSignal<string[]>([])
   const [directory, setDirectory] = createSignal("")
   const [customDir, setCustomDir] = createSignal(false)
@@ -348,7 +351,7 @@ export function ScheduleForm(props: {
       const variantPart = variant() ? ` · ${variant()}` : ""
       parts.push(`${selectedModel()!.name}${variantPart}`)
     }
-    if (agent()) parts.push(agent())
+    if (agent()) parts.push(agentLabel())
     const dir = directory().trim()
     if (dir) parts.push(dir)
     return parts.length > 0 ? parts.join(" · ") : "模型 · Agent · 执行目录"
@@ -808,7 +811,7 @@ export function ScheduleForm(props: {
                     >
                       <option value="">跟随会话</option>
                       <For each={agents()}>
-                        {(item) => <option value={item.name}>{item.name}</option>}
+                        {(item) => <option value={item.id}>{item.name}</option>}
                       </For>
                     </select>
                   </div>

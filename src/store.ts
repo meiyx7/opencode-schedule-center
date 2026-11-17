@@ -237,15 +237,20 @@ export class ScheduleStore {
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([directory]) => directory)
   }
 
-  /** Primary agents available for scheduled runs. */
-  async primaryAgents(): Promise<Array<{ name: string; description?: string }>> {
+  /**
+   * Primary agents available for scheduled runs. `id` is the stable value the
+   * session API expects; `name` is only a human-friendly label for the picker.
+   */
+  async primaryAgents(): Promise<Array<{ id: string; name: string; description?: string }>> {
     try {
       const response = await this.client.agent.list()
-      const agents = (response.data ?? response) as Array<{ name: string; mode?: string; description?: string }>
+      const agents = (response.data ?? response) as Array<{ id: string; name: string; mode?: string; description?: string }>
       return agents
         .filter((agent) => agent.mode === "primary" || agent.mode === "all")
-        .filter((agent) => !["Compaction", "Title", "Summary"].includes(agent.name))
-        .map((agent) => ({ name: agent.name, description: agent.description }))
+        // Bookkeeping agents are not meaningful owners for a scheduled run.
+        // Match on id (stable) rather than display name, which is localized.
+        .filter((agent) => !["compaction", "title", "summary"].includes(agent.id))
+        .map((agent) => ({ id: agent.id, name: agent.name, description: agent.description }))
     } catch {
       return []
     }
