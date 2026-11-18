@@ -455,8 +455,7 @@ export class ScheduleStore {
  * Map an official AutomationInfo to the panel's display projection. Every
  * official field is preserved with its SDK type — including `action`, kept
  * verbatim as the official prompt|code discriminated union (a code action is
- * NEVER downgraded to prompt). Only three fields get display aliases; gating
- * conditions and run caps have no official equivalent and stay undefined.
+ * NEVER downgraded to prompt). Only three fields get display aliases.
  */
 function fromAutomation(info: AutomationInfo): ScheduleInfo {
   const { trigger, expires, lastRunAt, ...rest } = info
@@ -474,12 +473,10 @@ function fromAutomation(info: AutomationInfo): ScheduleInfo {
  *  - `sessionID` is the CREATOR (the mount session this plugin just created);
  *  - `action.to.session` is the EXECUTION TARGET the prompt is delivered to.
  * They are the same session here because the plugin gives each task a dedicated
- * home, but they are independent fields in the API.
- *
- * Mapping limits (official API has no equivalent — recorded, not simulated):
- *  - `ends.times` (run cap): ignored;
- *  - `if` / `until` (gating conditions): ignored;
- *  - `in` is expressed as an absolute-offset `at` trigger ("in <duration>").
+ * home, but they are independent fields in the API. `ends` is time-only and maps
+ * to the official `expires`; `in` is expressed as an absolute-offset `at`
+ * trigger ("in <duration>"). No other fields are sent — this payload is exactly
+ * an ExperimentalAutomationCreateInput.
  */
 function buildCreateInput(ownerSessionID: string, draft: CreateDraft): ExperimentalAutomationCreateInput {
   const when: WhenDraft = draft.when
@@ -514,8 +511,6 @@ function draftKey(draft: CreateDraft): string {
     prompt: draft.prompt,
     when: draft.when,
     ends: draft.ends,
-    if: draft.if,
-    until: draft.until,
     model: draft.model,
     agent: draft.agent,
     directory: draft.directory,

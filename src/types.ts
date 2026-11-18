@@ -21,20 +21,14 @@ export type ScheduleOutcome = AutomationOutcome
  *  into an absolute `at` trigger by the host, so the API never returns it. */
 export type ScheduleWhen = AutomationTrigger | { type: "in"; in: string; tz?: string }
 
-/** Legacy display shape for `if` / `until`. The Automation API has no condition
- *  fields; these are kept only so the detail view can still render old rows
- *  and the pure formatter stays testable. The store never populates them. */
-export type ScheduleCondition =
-  | { type: "shell"; run: string; is?: string; matches?: string; changes?: boolean }
-  | { type: "code"; code: string }
-
 /**
  * Row handed to the panel. Built from the official AutomationInfo by the store:
- * - official fields keep their SDK types (Omit only removes the two we reshape);
+ * - official fields keep their SDK types (Omit only removes the three we reshape);
  * - `when` is the display projection of the official `trigger`;
- * - `endsAt` mirrors official `expires`, `lastFiredAt` mirrors `lastRunAt`;
- * - `if` / `until` / `remainingRuns` have NO official equivalent and stay
- *   undefined — the automation API has neither gating conditions nor run caps.
+ * - `endsAt` mirrors official `expires`, `lastFiredAt` mirrors `lastRunAt`.
+ * The Automation API has neither gating conditions nor run caps, so no such
+ * fields exist here — every other official field (state, runCount, lastOutput,
+ * projectID, directory, time, ...) is preserved verbatim from AutomationInfo.
  */
 export type ScheduleInfo = Omit<OfficialAutomationInfo, "action" | "trigger" | "name"> & {
   name?: string
@@ -46,14 +40,8 @@ export type ScheduleInfo = Omit<OfficialAutomationInfo, "action" | "trigger" | "
   action: AutomationAction
   /** Display alias of official `expires`. */
   endsAt?: number
-  /** No official equivalent. */
-  remainingRuns?: number
   /** Display alias of official `lastRunAt`. */
   lastFiredAt?: number
-  /** No official equivalent. */
-  if?: ScheduleCondition
-  /** No official equivalent. */
-  until?: ScheduleCondition
 }
 
 /** A session's model pick, mirroring the API's ModelRef. */
@@ -89,20 +77,15 @@ export type WhenDraft =
   | { kind: "every"; every: string; tz?: string }
   | { kind: "cron"; cron: string; tz?: string }
 
-/** Duration/end draft from the form. `times` has no Automation equivalent and
- *  is deliberately ignored by the store (recorded as an open issue in B0). */
-export type ConditionDraft =
-  | { run: string; is?: string; matches?: string; changes?: boolean }
-  | { code: string }
+/** Time-only end condition from the form. The official API has no run-cap field. */
+export type EndDraft = { after?: string; at?: string }
 
 export interface CreateDraft {
   sessionID: string
   name?: string
   when: WhenDraft
   prompt: string
-  ends?: { after?: string; at?: string; times?: number }
-  if?: ConditionDraft
-  until?: ConditionDraft
+  ends?: EndDraft
   model?: { id: string; providerID: string; variant?: string }
   directory?: string
   agent?: string

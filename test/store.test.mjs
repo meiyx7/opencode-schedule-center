@@ -690,49 +690,57 @@ describe("批次3：官方创建参数透传", () => {
     assert.equal(params().name, "巡检")
   })
 
-  it("官方 Automation API 无 if/until 门禁字段：不向入参注入", async () => {
+  it("创建请求严格符合 ExperimentalAutomationCreateInput：无 if/until/times/ends 旧字段", async () => {
     const { client, params } = createCall()
-    await new ScheduleStore(client).createSchedule(
-      draft({
-        if: { run: "git status --porcelain", changes: true },
-        until: { code: "return dayOfWeek() === 5" },
-      }),
-    )
-    assert.equal("if" in params(), false)
-    assert.equal("until" in params(), false)
-    assert.equal(params().action.type, "prompt")
-  })
-
-  it("ends.after/at 折算为官方 expires；times 无官方对应不注入", async () => {
-    const cases = [
-      [{ after: "2 hours" }, "in 2 hours"],
-      [{ at: "2026-12-01T09:00:00+08:00" }, "2026-12-01T09:00:00+08:00"],
-      [{ times: 5 }, undefined],
-    ]
-    for (const [ends, expected] of cases) {
-      const { client, params } = createCall()
-      await new ScheduleStore(client).createSchedule(draft({ ends }))
-      assert.equal(params().expires, expected, `ends=${JSON.stringify(ends)} 的 expires 映射`)
-      assert.equal("ends" in params(), false)
+    await new ScheduleStore(client).createSchedule(draft())
+    const payload = params()
+    // Only official create keys are allowed; legacy condition/cap keys must be absent.
+    const allowed = new Set(["sessionID", "directory", "name", "trigger", "action", "expires"])
+    for (const key of Object.keys(payload)) {
+      assert.ok(allowed.has(key), `创建请求出现非官方字段：${key}`)
     }
+    for (const legacy of ["if", "until", "times", "ends"]) {
+      assert.equal(legacy in payload, false, `创建请求不应含旧字段 ${legacy}`)
+    }
+    assert.equal(payload.action.type, "prompt")
   })
 
-  it("different ends / conditions count as distinct drafts for duplicate-submit", async () => {
+  it("ends.after 折算为官方 expires（in <duration>）", async () => {
+    const { client, params } = createCall()
+    await new ScheduleStore(client).createSchedule(draft({ ends: { after: "2 hours" } }))
+    assert.equal(params().expires, "in 2 hours")
+    assert.equal("ends" in params(), false)
+  })
+
+  it("ends.at 折算为官方 expires（绝对时间）", async () => {
+    const { client, params } = createCall()
+    await new ScheduleStore(client).createSchedule(draft({ ends: { at: "2026-12-01T09:00:00+08:00" } }))
+    assert.equal(params().expires, "2026-12-01T09:00:00+08:00")
+    assert.equal("ends" in params(), false)
+  })
+
+  it("不设置结束条件时不传 expires，也不传任何旧字段", async () => {
+    const { client, params } = createCall()
+    await new ScheduleStore(client).createSchedule(draft())
+    assert.equal("expires" in params(), false)
+    assert.equal("ends" in params(), false)
+  })
+
+  it("不同的有效 ends 折算仍算不同草稿（去重键基于有效字段）", async () => {
     const { client, calls } = createCall()
     const store = new ScheduleStore(client)
-    const a = store.createSchedule(draft({ ends: { times: 5 } }))
-    const b = store.createSchedule(draft({ ends: { times: 10 } }))
+    const a = store.createSchedule(draft({ ends: { after: "5 minutes" } }))
+    const b = store.createSchedule(draft({ ends: { after: "10 minutes" } }))
     await Promise.all([a, b])
     assert.equal(countOf(calls, "automation", "create"), 2)
   })
 
-  it("same full draft (incl. tz/ends/if) still coalesces to one create", async () => {
+  it("same full draft (incl. tz/ends) still coalesces to one create", async () => {
     const { client, calls } = createCall()
     const store = new ScheduleStore(client)
     const full = draft({
       when: { kind: "every", every: "5 minutes", tz: "Asia/Shanghai" },
       ends: { after: "2 hours" },
-      if: { run: "test -f /tmp/flag" },
     })
     await Promise.all([store.createSchedule(full), store.createSchedule(full)])
     assert.equal(countOf(calls, "automation", "create"), 1)
@@ -796,6 +804,40 @@ describe("B2.1：Code Action 全链路保留，不降级为 Prompt", () => {
     const created = await store.createSchedule(draft())
     assert.deepEqual(created.action, codeAction, "创建结果里的 code action 不得被降级")
     assert.equal(store.cachedRows()[0].schedule.action.type, "code")
+  })
+})
+
+describe("B2.2：官方字段完整保留，旧条件不再出现", () => {
+  it("官方 Automation 的 runCount/state/lastOutput/projectID/directory/time 原样保留", async () => {
+    const official = makeSchedule({
+      id: "t-official",
+      runCount: 7,
+      state: { retries: 2, note: "third-party state" },
+      lastOutput: "done: ok",
+      lastOutcome: "fired",
+      lastRunAt: 1_700_000_000_000,
+      expires: 1_800_000_000_000,
+      projectID: "prj-x",
+      directory: "/repo/x",
+      time: { created: 100, updated: 200 },
+    })
+    const { client } = createClient({ automation: { list: async () => [official] } })
+    const result = await new ScheduleStore(client).listAll()
+    const row = result.rows[0]
+    // Display aliases exist AND every official field survives the projection.
+    assert.equal(row.schedule.endsAt, official.expires)
+    assert.equal(row.schedule.lastFiredAt, official.lastRunAt)
+    assert.equal(row.schedule.runCount, 7)
+    assert.deepEqual(row.schedule.state, official.state)
+    assert.equal(row.schedule.lastOutput, "done: ok")
+    assert.equal(row.schedule.lastOutcome, "fired")
+    assert.equal(row.schedule.projectID, "prj-x")
+    assert.equal(row.schedule.directory, "/repo/x")
+    assert.deepEqual(row.schedule.time, { created: 100, updated: 200 })
+    // No legacy condition/cap field leaks into the display projection.
+    for (const legacy of ["if", "until", "remainingRuns"]) {
+      assert.equal(legacy in row.schedule, false, `展示数据不应含旧字段 ${legacy}`)
+    }
   })
 })
 
@@ -1131,13 +1173,12 @@ describe("批次7 / TASK-08：多草稿并发去重（按 draftKey 管理在途 
     assert.equal(countOf(calls, "automation", "create"), 2, "成功后再提交应创建新任务")
   })
 
-  it("同一草稿包含 tz/ends/if/until 时仍正确去重", async () => {
+  it("同一完整草稿（tz/ends/directory）仍正确去重", async () => {
     const { store, calls, gateFor } = gatedCreateStore()
     const full = draft({
       when: { kind: "every", every: "5 minutes", tz: "Asia/Shanghai" },
       ends: { after: "2 hours" },
-      if: { run: "test -f /tmp/flag" },
-      until: { code: "return true" },
+      directory: "/work/project",
     })
     const p1 = store.createSchedule(full)
     const p2 = store.createSchedule({ ...full }) // 结构相同，键相同

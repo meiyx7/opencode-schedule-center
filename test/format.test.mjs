@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { outcomeLabel, describeCondition, describeWhen, actionText, actionLabel, actionArgsText, scheduleTitle } from "./.build/gui/format.js"
+import { outcomeLabel, describeWhen, actionText, actionLabel, actionArgsText, scheduleTitle } from "./.build/gui/format.js"
 
 describe("批次4：官方状态/结果展示一致性", () => {
   it("七个官方 outcome 各有明确文案，checked 不等于 skipped", () => {
@@ -28,17 +28,6 @@ describe("批次4：官方状态/结果展示一致性", () => {
       assert.equal(label.text, label.text, "文案非空")
       assert.ok(!/^[a-z]+$/.test(label.text), `${value} 不应显示英文原值`)
     }
-  })
-
-  it("shell 条件展示 run/is/matches/changes，code 条件展示代码", () => {
-    const shell = describeCondition({ type: "shell", run: "git status", is: "clean", matches: "ok", changes: true })
-    assert.ok(shell.includes("git status"))
-    assert.ok(shell.includes("clean"))
-    assert.ok(shell.includes("ok"))
-    assert.ok(shell.includes("变化"))
-    const code = describeCondition({ type: "code", code: "return true" })
-    assert.ok(code.includes("return true"))
-    assert.equal(describeCondition(undefined), "")
   })
 
   it("四种触发方式均可描述且时区字段不参与本地推算", () => {

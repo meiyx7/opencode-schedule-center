@@ -1,13 +1,12 @@
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
-import type { ConditionDraft, ModelProviderGroup, ScheduleRow, ScheduleWhen, SessionInfo, WhenDraft } from "../types"
-import { actionArgsText, actionLabel, clockText, describeCondition, describeWhen, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime } from "./format"
+import type { ModelProviderGroup, ScheduleRow, ScheduleWhen, SessionInfo, WhenDraft } from "../types"
+import { actionArgsText, actionLabel, clockText, describeWhen, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime } from "./format"
 import { Combobox, type ComboOption } from "./combobox"
 import type { ScheduleStore } from "../store"
 
 type IconName = "clock" | "calendar" | "repeat" | "terminal" | "sliders" | "check" | "chevron" | "spark" | "warn"
-type ConditionMode = "off" | "shell" | "code"
-type EndKind = "none" | "after" | "at" | "times"
+type EndKind = "none" | "after" | "at"
 
 const WHEN_KINDS: Array<{ id: WhenDraft["kind"]; label: string; icon: IconName }> = [
   { id: "in", label: "延迟", icon: "clock" },
@@ -18,7 +17,6 @@ const WHEN_KINDS: Array<{ id: WhenDraft["kind"]; label: string; icon: IconName }
 
 const END_KINDS: Array<{ id: EndKind; label: string }> = [
   { id: "none", label: "不限" },
-  { id: "times", label: "次数" },
   { id: "after", label: "时长" },
   { id: "at", label: "指定时间" },
 ]
@@ -150,28 +148,13 @@ export function ScheduleForm(props: {
   const [cron, setCron] = createSignal("0 9 * * 1-5")
   const [tz, setTz] = createSignal("")
   // End condition: default is "none" (no ends payload). Only one of
-  // after/at/times is ever sent — all four supported shapes stay mutually
+  // after/at is ever sent — the two official time-end shapes stay mutually
   // exclusive in the UI so no ambiguous combination reaches the server.
   const [endKind, setEndKind] = createSignal<EndKind>("none")
   const [endAfter, setEndAfter] = createSignal("")
   const initialEndAt = defaultAt()
   const [endAt, setEndAt] = createSignal(initialEndAt)
   const [prompt, setPrompt] = createSignal("")
-  const [times, setTimes] = createSignal("")
-  // if / until conditions live in advanced options and are passed through in
-  // the official create-payload shape only — no local condition evaluation.
-  const [ifMode, setIfMode] = createSignal<ConditionMode>("off")
-  const [ifRun, setIfRun] = createSignal("")
-  const [ifIs, setIfIs] = createSignal("")
-  const [ifMatches, setIfMatches] = createSignal("")
-  const [ifChanges, setIfChanges] = createSignal(false)
-  const [ifCode, setIfCode] = createSignal("")
-  const [untilMode, setUntilMode] = createSignal<ConditionMode>("off")
-  const [untilRun, setUntilRun] = createSignal("")
-  const [untilIs, setUntilIs] = createSignal("")
-  const [untilMatches, setUntilMatches] = createSignal("")
-  const [untilChanges, setUntilChanges] = createSignal(false)
-  const [untilCode, setUntilCode] = createSignal("")
   const [advanced, setAdvanced] = createSignal(true)
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
@@ -296,7 +279,6 @@ export function ScheduleForm(props: {
   // submit. The store also coalesces duplicate creates as a second line of defense.
   let submitting = false
   const submit = async () => {
-    // 非法次数绝不能静默落成“不限次”：提交前再挡一次。
     if (!draft() || !canSubmit() || submitting) return
     submitting = true
     setBusy(true)
@@ -311,8 +293,6 @@ export function ScheduleForm(props: {
         when: draft()!,
         prompt: prompt().trim(),
         ...(ends ? { ends } : {}),
-        ...(buildCondition("if") ? { if: buildCondition("if")! } : {}),
-        ...(buildCondition("until") ? { until: buildCondition("until")! } : {}),
         ...(selected
           ? {
               model: {
@@ -335,14 +315,10 @@ export function ScheduleForm(props: {
   }
 
   /**
-   * Build the official `ends` payload from the mutually-exclusive end kind.
-   * We only pass the parameter through — the server computes endsAt / runs.
+   * Build the time-only `ends` draft from the mutually-exclusive end kind.
+   * The store maps it to the official `expires`; the server computes endsAt.
    */
-  function buildEnds(): { after?: string; at?: string; times?: number } | undefined {
-    if (endKind() === "times") {
-      const value = Number(times())
-      return Number.isInteger(value) && value > 0 ? { times: value } : undefined
-    }
+  function buildEnds(): { after?: string; at?: string } | undefined {
     if (endKind() === "after") {
       const value = minutesExpression(endAfter())
       return value ? { after: value } : undefined
@@ -362,33 +338,6 @@ export function ScheduleForm(props: {
     return /^\d+(\.\d+)?\s*(seconds?|minutes?|hours?|days?|secs?|mins?)$/i.test(text) ? text : undefined
   }
 
-  /**
-   * Translate the advanced condition editor into the official create-payload
-   * shape. `type` is intentionally absent: the API discriminates shell vs code
-   * by run/code. No condition is ever evaluated locally.
-   */
-  function buildCondition(which: "if" | "until"): ConditionDraft | undefined {
-    const mode = which === "if" ? ifMode() : untilMode()
-    if (mode === "off") return undefined
-    if (mode === "code") {
-      const code = (which === "if" ? ifCode() : untilCode()).trim()
-      return code ? { code } : undefined
-    }
-    const run = (which === "if" ? ifRun() : untilRun()).trim()
-    if (!run) return undefined
-    const is = (which === "if" ? ifIs() : untilIs()).trim()
-    const matches = (which === "if" ? ifMatches() : untilMatches()).trim()
-    const changes = which === "if" ? ifChanges() : untilChanges()
-    return { run, ...(is ? { is } : {}), ...(matches ? { matches } : {}), ...(changes ? { changes: true } : {}) }
-  }
-
-  /** Step the max-runs input; an empty value starts at 5 so "−" has a base. */
-  function stepTimes(delta: number) {
-    const current = Number(times())
-    const next = Number.isInteger(current) && current > 0 ? current + delta : 5
-    setTimes(String(Math.max(1, next)))
-  }
-
   /** Step a minute field with adaptive increments (1 below 60, 15 up to 240, 60 beyond). */
   function stepMinutes(value: () => string, set: (value: string) => void, delta: number) {
     const current = Number(value())
@@ -400,13 +349,6 @@ export function ScheduleForm(props: {
   const invalidCron = () => kind() === "cron" && cron().trim().length > 0 && !isValidCron(cron())
   const invalidIn = () => kind() === "in" && !(Number(inMinutes()) > 0)
   const invalidEvery = () => kind() === "every" && !(Number(everyMinutes()) > 0)
-  const invalidTimes = () => {
-    if (endKind() !== "times") return false
-    const value = times().trim()
-    if (value.length === 0) return true // a chosen "times" end must carry a value
-    const numeric = Number(value)
-    return !Number.isInteger(numeric) || numeric <= 0
-  }
   const invalidEndAfter = () => {
     if (endKind() !== "after") return false
     return minutesExpression(endAfter()) === undefined
@@ -414,12 +356,6 @@ export function ScheduleForm(props: {
   const invalidEndAt = () => {
     if (endKind() !== "at") return false
     return Number.isNaN(Date.parse(endAt()))
-  }
-  const invalidCondition = (which: "if" | "until") => {
-    const mode = which === "if" ? ifMode() : untilMode()
-    if (mode === "off") return false
-    if (mode === "code") return !(which === "if" ? ifCode() : untilCode()).trim()
-    return !(which === "if" ? ifRun() : untilRun()).trim()
   }
   // 绝对时间必须晚于当前时刻；否则到点即触发或永远不触发。
   const invalidAt = () => {
@@ -433,11 +369,8 @@ export function ScheduleForm(props: {
     !busy() &&
     draft() !== null &&
     prompt().trim().length > 0 &&
-    !invalidTimes() &&
     !invalidEndAfter() &&
     !invalidEndAt() &&
-    !invalidCondition("if") &&
-    !invalidCondition("until") &&
     !invalidAt()
 
   // Footer summary: the schedule that is about to be created, in words.
@@ -505,10 +438,7 @@ export function ScheduleForm(props: {
       tz().trim() !== "" ||
       endKind() !== "none" ||
       endAfter().trim() !== "" ||
-      endAt() !== initialEndAt ||
-      times().trim() !== "" ||
-      ifMode() !== "off" ||
-      untilMode() !== "off",
+      endAt() !== initialEndAt,
   )
   createEffect(() => props.onDirtyChange?.(dirty()))
 
@@ -771,22 +701,6 @@ export function ScheduleForm(props: {
                   )}
                 </For>
               </div>
-              <Show when={endKind() === "times"}>
-                <div class="sc-limit">
-                  <span>最多</span>
-                  <div class="sc-stepper">
-                    <button type="button" class="sc-step" aria-label="减少" tabIndex={-1} onClick={() => stepTimes(-1)}>−</button>
-                    <input
-                      id="sc-times" class="sc-input" type="number" min="1" placeholder="5"
-                      aria-label="结束前触发次数" value={times()}
-                      onInput={(event) => setTimes(event.currentTarget.value)}
-                    />
-                    <button type="button" class="sc-step" aria-label="增加" tabIndex={-1} onClick={() => stepTimes(1)}>+</button>
-                  </div>
-                  <span>次后结束</span>
-                </div>
-                <Show when={invalidTimes()}><p class="sc-hint sc-hint-bad">需为正整数</p></Show>
-              </Show>
               <Show when={endKind() === "after"}>
                 <div class="sc-limit">
                   <span>运行</span>
@@ -812,7 +726,7 @@ export function ScheduleForm(props: {
                 </div>
                 <Show when={invalidEndAt()}><p class="sc-hint sc-hint-bad">请选择有效时间</p></Show>
               </Show>
-              <p class="sc-label-note">结束时间、剩余次数由官方返回，此处不自行计算。</p>
+              <p class="sc-label-note">结束时间由官方返回，此处不自行计算。</p>
             </div>
           </aside>
           </div>
@@ -1026,24 +940,6 @@ export function ScheduleForm(props: {
                 </Show>
               </div>
 
-              <div class="sc-conditions">
-                <div class="sc-conditions-head">
-                  <span class="sc-label">运行条件（高级）</span>
-                  <span class="sc-label-note">原样传给官方，不在本地执行</span>
-                </div>
-                <ConditionEditor
-                  title="执行条件 if" mode={ifMode()} onMode={setIfMode}
-                  run={ifRun()} onRun={setIfRun} is={ifIs()} onIs={setIfIs}
-                  matches={ifMatches()} onMatches={setIfMatches}
-                  changes={ifChanges()} onChanges={setIfChanges} code={ifCode()} onCode={setIfCode}
-                />
-                <ConditionEditor
-                  title="结束条件 until" mode={untilMode()} onMode={setUntilMode}
-                  run={untilRun()} onRun={setUntilRun} is={untilIs()} onIs={setUntilIs}
-                  matches={untilMatches()} onMatches={setUntilMatches}
-                  changes={untilChanges()} onChanges={setUntilChanges} code={untilCode()} onCode={setUntilCode}
-                />
-              </div>
           </Show>
         </div>
       </section>
@@ -1073,71 +969,6 @@ export function ScheduleForm(props: {
           </button>
         </div>
       </div>
-    </div>
-  )
-}
-
-/** Editor for one official condition (if / until). Raw fields only — no local evaluation. */
-function ConditionEditor(props: {
-  title: string
-  mode: ConditionMode
-  onMode: (mode: ConditionMode) => void
-  run: string
-  onRun: (value: string) => void
-  is: string
-  onIs: (value: string) => void
-  matches: string
-  onMatches: (value: string) => void
-  changes: boolean
-  onChanges: (value: boolean) => void
-  code: string
-  onCode: (value: string) => void
-}) {
-  const modes: Array<{ id: ConditionMode; label: string }> = [
-    { id: "off", label: "不设置" },
-    { id: "shell", label: "Shell" },
-    { id: "code", label: "Code" },
-  ]
-  return (
-    <div class="sc-condition">
-      <div class="sc-condition-head">
-        <span class="sc-condition-title">{props.title}</span>
-        <div class="sc-end-kinds" role="group" aria-label={`${props.title}类型`}>
-          <For each={modes}>
-            {(option) => (
-              <button
-                type="button" class="sc-chip" classList={{ active: props.mode === option.id }}
-                onClick={() => props.onMode(option.id)}
-              >
-                {option.label}
-              </button>
-            )}
-          </For>
-        </div>
-      </div>
-      <Show when={props.mode === "shell"}>
-        <div class="sc-condition-fields">
-          <input class="sc-input" type="text" placeholder="run：判定的 shell 命令" aria-label="Shell run"
-            value={props.run} onInput={(event) => props.onRun(event.currentTarget.value)} />
-          <div class="sc-condition-row">
-            <input class="sc-input" type="text" placeholder="is：期望输出（可选）" aria-label="Shell is"
-              value={props.is} onInput={(event) => props.onIs(event.currentTarget.value)} />
-            <input class="sc-input" type="text" placeholder="matches：正则（可选）" aria-label="Shell matches"
-              value={props.matches} onInput={(event) => props.onMatches(event.currentTarget.value)} />
-          </div>
-          <label class="sc-condition-check">
-            <input type="checkbox" checked={props.changes}
-              onChange={(event) => props.onChanges(event.currentTarget.checked)} />
-            <span>输出发生变化时满足（changes）</span>
-          </label>
-        </div>
-      </Show>
-      <Show when={props.mode === "code"}>
-        <div class="sc-condition-fields">
-          <textarea class="sc-input sc-textarea" rows="2" placeholder="code：条件代码" aria-label="Code 条件"
-            value={props.code} onInput={(event) => props.onCode(event.currentTarget.value)} />
-        </div>
-      </Show>
     </div>
   )
 }
@@ -1260,8 +1091,6 @@ function CopyButton(props: { text: string; label: string }) {
 export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Context }) {
   const { schedule } = props.row
   const outcome = outcomeLabel(schedule.lastOutcome)
-  const ifText = describeCondition(schedule.if)
-  const untilText = describeCondition(schedule.until)
   const actionArgs = actionArgsText(schedule.action)
   const model = modelRefLabel(props.row.session?.model)
   const agent = props.row.session?.agent?.trim() ?? ""
@@ -1330,14 +1159,6 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Cont
         <span class="sc-detail-value">{describeWhen(schedule.when)}</span>
         <span class="sc-detail-key">时区</span>
         <span class="sc-detail-value">{schedule.tz || "—"}</span>
-        <Show when={ifText}>
-          <span class="sc-detail-key">执行条件 if</span>
-          <span class="sc-detail-value sc-prompt-text"><span class="sc-detail-text">{ifText}</span></span>
-        </Show>
-        <Show when={untilText}>
-          <span class="sc-detail-key">结束条件 until</span>
-          <span class="sc-detail-value sc-prompt-text"><span class="sc-detail-text">{untilText}</span></span>
-        </Show>
         <span class="sc-detail-key">{actionLabel(schedule.action)}</span>
         <span class="sc-detail-value sc-prompt-text">
           <span class="sc-detail-text">
@@ -1359,10 +1180,7 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Cont
           <span class="sc-detail-value">{clockText(schedule.endsAt)}</span>
         </Show>
         <span class="sc-detail-key">已触发</span>
-        <span class="sc-detail-value">
-          {schedule.runCount} 次
-          <Show when={schedule.remainingRuns !== undefined}>（剩余 {schedule.remainingRuns} 次）</Show>
-        </span>
+        <span class="sc-detail-value">{schedule.runCount} 次</span>
         <Show when={schedule.lastFiredAt !== undefined}>
           <span class="sc-detail-key">上次触发</span>
           <span class="sc-detail-value">

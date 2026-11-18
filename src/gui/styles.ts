@@ -866,7 +866,7 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   margin: 0;
 }
 
-/* End condition (after/at/times) inside the preview aside. */
+/* End condition (after/at) inside the preview aside. */
 .sc-end {
   display: flex;
   flex-direction: column;
@@ -889,25 +889,6 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 /* Timezone input under the four trigger modes. */
 .sc-tz-field { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
 .sc-tz-field .sc-input { height: 34px; }
-
-/* if / until raw condition editors. */
-.sc-conditions {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px dashed var(--sc-border);
-}
-.sc-conditions-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.sc-condition { display: flex; flex-direction: column; gap: 8px; }
-.sc-condition-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.sc-condition-title { font-weight: 600; font-size: 12px; }
-.sc-condition-fields { display: flex; flex-direction: column; gap: 6px; }
-.sc-condition-fields .sc-input { height: 32px; }
-.sc-condition-row { display: flex; gap: 6px; flex-wrap: wrap; }
-.sc-condition-row .sc-input { flex: 1 1 160px; }
-.sc-condition-check { display: inline-flex; align-items: center; gap: 6px; color: var(--sc-muted); font-size: 11px; }
 
 /* Execution: prompt and advanced options. */
 .sc-field {
@@ -1622,63 +1603,6 @@ select.sc-input {
 .sc-scrollers button:hover {
   background: var(--sc-layer-2, rgba(128, 128, 128, 0.14));
   color: var(--sc-strong);
-}
-
-/* The limit stepper lives inline in the preview card. */
-.sc-stepper {
-  display: flex;
-  align-items: center;
-  border: 1px solid var(--sc-border);
-  border-radius: 7px;
-  background: var(--sc-card);
-  overflow: hidden;
-}
-
-.sc-stepper .sc-input {
-  width: 44px;
-  height: 24px;
-  border: none;
-  border-radius: 0;
-  padding: 0 4px;
-  text-align: center;
-  font-size: 12px;
-  background: transparent;
-  -moz-appearance: textfield;
-  appearance: textfield;
-}
-
-.sc-stepper .sc-input:focus {
-  box-shadow: none;
-  background: transparent;
-}
-
-.sc-stepper .sc-input::-webkit-inner-spin-button,
-.sc-stepper .sc-input::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-.sc-step {
-  width: 20px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--sc-muted);
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-
-.sc-step:hover:not(:disabled) {
-  background: var(--sc-layer-2, rgba(128, 128, 128, 0.12));
-  color: var(--sc-strong);
-}
-
-.sc-step:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 
 /* Armed delete: pulse gently so the second click is obvious. */

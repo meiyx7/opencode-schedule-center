@@ -1,5 +1,5 @@
 import type { AutomationAction } from "@opencode/client/promise"
-import type { ScheduleCondition, ScheduleInfo, ScheduleWhen, WhenDraft } from "../types"
+import type { ScheduleInfo, ScheduleWhen, WhenDraft } from "../types"
 
 /**
  * Search/title text for an official action. A code action is labelled as code
@@ -155,17 +155,6 @@ export function outcomeLabel(outcome: string | undefined): { text: string; tone:
   if (outcome === "disabled") return { text: "已禁用", tone: "warn" }
   if (outcome === "failed") return { text: "触发失败", tone: "bad" }
   return { text: outcome, tone: "warn" }
-}
-
-/** Human text for an official schedule condition (shell / code). */
-export function describeCondition(condition: ScheduleCondition | undefined): string {
-  if (!condition) return ""
-  if (condition.type === "code") return `代码：${condition.code}`
-  const parts = [`命令：${condition.run}`]
-  if (condition.is !== undefined) parts.push(`输出为「${condition.is}」`)
-  if (condition.matches !== undefined) parts.push(`匹配「${condition.matches}」`)
-  if (condition.changes) parts.push("输出变化时")
-  return parts.join(" · ")
 }
 
 const CRON_FIELD_RANGES: Array<[number, number]> = [
