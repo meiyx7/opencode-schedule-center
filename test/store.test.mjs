@@ -102,7 +102,7 @@ function hasCall(calls, group, name) {
 async function seededStore({ sessions = [], schedules = {} } = {}) {
   const { client, calls } = createClient({
     session: { list: async () => ({ data: sessions, cursor: {} }) },
-    automation: { list: async ({ sessionID }) => schedules[sessionID] ?? [] },
+    automation: { list: async () => Object.values(schedules).flat() },
   })
   const store = new ScheduleStore(client)
   const result = await store.listAll()
@@ -398,7 +398,11 @@ describe("全会话扫描分页 / TASK-03", () => {
         },
       },
       automation: {
-        list: async ({ sessionID }) => [makeSchedule({ id: `t-${sessionID}`, sessionID })],
+        list: async () => [
+          makeSchedule({ id: "t-s1", sessionID: "s1" }),
+          makeSchedule({ id: "t-s2", sessionID: "s2" }),
+          makeSchedule({ id: "t-s3", sessionID: "s3" }),
+        ],
       },
     })
     const result = await new ScheduleStore(client).listAll()
@@ -424,7 +428,7 @@ describe("全会话扫描分页 / TASK-03", () => {
     assert.equal(result.rows.length, 0)
   })
 
-  it("达到安全上限时保留未扫描会话的已有任务，不静默丢失", async () => {
+  it("会话元数据分页达上限：全局任务仍完整展示，只标记元数据不完整", async () => {
     let truncatedMode = false
     const { client } = createClient({
       session: {
@@ -434,41 +438,66 @@ describe("全会话扫描分页 / TASK-03", () => {
         },
       },
       automation: {
-        list: async ({ sessionID }) => [makeSchedule({ id: `t-${sessionID}`, sessionID })],
+        list: async () => [
+          makeSchedule({ id: "t-s1", sessionID: "s1" }),
+          makeSchedule({ id: "t-s3", sessionID: "s3" }),
+        ],
       },
     })
     const store = new ScheduleStore(client)
     const first = await store.listAll()
-    assert.equal(first.rows.length, 1)
+    assert.equal(first.rows.length, 2)
 
     truncatedMode = true
     const second = await store.listAll()
-    assert.equal(second.truncated, true)
+    assert.equal(second.truncated, true, "会话分页上限仍被标记")
+    // 全局列表不依赖 session 扫描：即使 s3 的会话元数据未扫到，任务仍在。
     assert.deepEqual(second.rows.map((row) => row.schedule.id).sort(), ["t-s1", "t-s3"])
+    const s3 = second.rows.find((row) => row.schedule.id === "t-s3")
+    assert.equal(s3.session, undefined, "未扫到的会话不得虚构元数据")
+    assert.equal(s3.sessionTitle, "do it", "缺元数据时用任务名兜底，不用空 sessionID")
   })
 
-  it("中间某页请求失败：抛出错误而非返回静默不完整结果", async () => {
+  it("会话元数据某页失败：记录 failure，任务仍完整展示且不抛错", async () => {
     let listCount = 0
     const { client } = createClient({
       session: {
         list: async () => {
           listCount += 1
-          if (listCount === 1) return { data: [makeSession({ id: "s1" })], cursor: {} }
-          if (listCount === 2) {
-            return { data: [makeSession({ id: "s1" })], cursor: { next: "cursor-2" } }
-          }
+          if (listCount === 1) return { data: [makeSession({ id: "s1" })], cursor: { next: "cursor-2" } }
           throw new Error("page failed")
         },
       },
       automation: {
-        list: async ({ sessionID }) => [makeSchedule({ id: `t-${sessionID}`, sessionID })],
+        list: async () => [
+          makeSchedule({ id: "t-s1", sessionID: "s1" }),
+          makeSchedule({ id: "t-s3", sessionID: "s3" }),
+        ],
       },
     })
     const store = new ScheduleStore(client)
-    await store.listAll()
-    assert.equal(store.cachedRows().length, 1)
-    await assert.rejects(store.listAll(), /page failed/)
-    assert.equal(store.cachedRows().length, 1, "失败不得清空上次有效数据")
+    const result = await store.listAll()
+    // Session metadata failure is non-fatal: tasks come from the global list.
+    assert.equal(result.rows.length, 2, "会话元数据失败不得漏掉全局任务")
+    assert.equal(result.failures.length, 1)
+    assert.match(result.failures[0].reason, /page failed/)
+  })
+
+  it("全局 automation.list 失败：抛出错误且不清空上次有效数据", async () => {
+    let fail = false
+    const { client } = createClient({
+      automation: {
+        list: async () => {
+          if (fail) throw new Error("global list down")
+          return [makeSchedule({ id: "t-s1", sessionID: "s1" })]
+        },
+      },
+    })
+    const store = new ScheduleStore(client)
+    assert.equal((await store.listAll()).rows.length, 1)
+    fail = true
+    await assert.rejects(store.listAll(), /global list down/)
+    assert.equal(store.cachedRows().length, 1, "列表读取失败不得清空上次有效数据")
   })
 
   it("扫描期间的暂停操作不会被较旧的扫描结果覆盖", async () => {
@@ -477,11 +506,12 @@ describe("全会话扫描分页 / TASK-03", () => {
     const { client } = createClient({
       session: { list: async () => ({ data: [makeSession({ id: "s1" })], cursor: {} }) },
       automation: {
-        list: async ({ sessionID }) => {
+        list: async () => {
           listCount += 1
-          if (listCount === 1) return [makeSchedule({ id: "t1", sessionID })]
+          if (listCount === 1) return [makeSchedule({ id: "t1", sessionID: "s1", status: "active" })]
+          // Second (global) list blocks; a local pause lands while it is in flight.
           await gate.promise
-          return [makeSchedule({ id: "t1", sessionID })]
+          return [makeSchedule({ id: "t1", sessionID: "s1", status: "active" })]
         },
         pause: async (params) => makeSchedule({ id: params.automationID, sessionID: "s1", status: "paused" }),
       },
@@ -511,7 +541,11 @@ describe("全会话扫描分页 / TASK-03", () => {
         },
       },
       automation: {
-        list: async ({ sessionID }) => [makeSchedule({ id: `t-${sessionID}`, sessionID })],
+        list: async () => [
+          makeSchedule({ id: "t-s1", sessionID: "s1" }),
+          makeSchedule({ id: "t-s2", sessionID: "s2" }),
+          makeSchedule({ id: "t-s3", sessionID: "s3" }),
+        ],
       },
     })
     const sweep = await new ScheduleStore(client).listAll()
@@ -520,118 +554,101 @@ describe("全会话扫描分页 / TASK-03", () => {
   })
 })
 
-describe("部分失败处理 / TASK-05", () => {
-  it("一个会话失败：其他会话数据保留，失败被记录", async () => {
+describe("部分失败处理 / TASK-05（全局列表 + 会话元数据容错）", () => {
+  it("会话元数据失败：全局任务仍全部展示，失败被记录为 page 标记", async () => {
+    let page = 0
     const { client, calls } = createClient({
       session: {
-        list: async () => ({ data: [makeSession({ id: "s1" }), makeSession({ id: "s2" })], cursor: {} }),
+        list: async () => {
+          page += 1
+          if (page === 1) return { data: [makeSession({ id: "s1" })], cursor: { next: "c2" } }
+          throw new Error("metadata page failed")
+        },
       },
       automation: {
-        list: async ({ sessionID }) => {
-          if (sessionID === "s2") throw new Error("s2 unavailable")
-          return [makeSchedule({ id: `t-${sessionID}`, sessionID })]
-        },
+        list: async () => [
+          makeSchedule({ id: "t-s1", sessionID: "s1" }),
+          makeSchedule({ id: "t-s2", sessionID: "s2" }),
+        ],
+      },
+    })
+    const result = await new ScheduleStore(client).listAll()
+    // The core B2.1 guarantee: a session-query failure never drops a global task.
+    assert.equal(result.rows.length, 2)
+    assert.deepEqual(result.rows.map((row) => row.schedule.id).sort(), ["t-s1", "t-s2"])
+    assert.equal(result.failures.length, 1)
+    assert.equal(result.failures[0].sessionID, "page:2")
+    assert.match(result.failures[0].reason, /metadata page failed/)
+    assert.equal(hasCall(calls, "automation", "delete"), false)
+  })
+
+  it("全部会话元数据失败：任务仍展示，failures 明确，不误报为空", async () => {
+    const { client } = createClient({
+      session: { list: async () => { throw new Error("all sessions down") } },
+      automation: {
+        list: async () => [makeSchedule({ id: "t-orphan", sessionID: "gone" })],
+      },
+    })
+    const result = await new ScheduleStore(client).listAll()
+    assert.equal(result.rows.length, 1, "会话全失败也不得丢失全局任务")
+    assert.equal(result.rows[0].schedule.id, "t-orphan")
+    assert.equal(result.failures.length, 1)
+    assert.match(result.failures[0].reason, /all sessions down/)
+  })
+
+  it("无创建者 sessionID 的任务：正常展示且不虚构会话", async () => {
+    const { client } = createClient({
+      automation: {
+        list: async () => [makeSchedule({ id: "t-no-owner", sessionID: undefined, name: "无主任务" })],
       },
     })
     const result = await new ScheduleStore(client).listAll()
     assert.equal(result.rows.length, 1)
-    assert.equal(result.rows[0].schedule.id, "t-s1")
-    assert.equal(result.failures.length, 1)
-    assert.equal(result.failures[0].sessionID, "s2")
-    assert.equal(result.failures[0].reason, "s2 unavailable")
-    assert.equal(hasCall(calls, "automation", "delete"), false)
+    const row = result.rows[0]
+    assert.equal(row.schedule.sessionID, undefined)
+    assert.equal(row.session, undefined, "不得为无 sessionID 的任务虚构会话")
+    assert.equal(row.sessionTitle, "无主任务", "用任务名兜底标题")
   })
 
-  it("多个会话失败：全部失败会话都被记录", async () => {
-    const sessions = [1, 2, 3].map((n) => makeSession({ id: `s${n}` }))
-    const { client } = createClient({
-      session: { list: async () => ({ data: sessions, cursor: {} }) },
-      automation: {
-        list: async ({ sessionID }) => {
-          if (sessionID !== "s1") throw new Error(`${sessionID} down`)
-          return [makeSchedule({ id: "t-s1", sessionID })]
-        },
-      },
-    })
-    const result = await new ScheduleStore(client).listAll()
-    assert.equal(result.failures.length, 2)
-    assert.deepEqual(result.failures.map((item) => item.sessionID).sort(), ["s2", "s3"])
-  })
-
-  it("全部会话失败：rows 为空但 failures 明确，不误报任务数量", async () => {
-    const sessions = [makeSession({ id: "s1" }), makeSession({ id: "s2" })]
-    const { client } = createClient({
-      session: { list: async () => ({ data: sessions, cursor: {} }) },
-      automation: {
-        list: async () => {
-          throw new Error("all down")
-        },
-      },
-    })
-    const result = await new ScheduleStore(client).listAll()
-    assert.equal(result.rows.length, 0)
-    assert.equal(result.failures.length, 2)
-  })
-
-  it("失败会话保留上次任务，不被判定为没有任务", async () => {
-    let fail = false
-    const sessions = [makeSession({ id: "s1" }), makeSession({ id: "s2" })]
-    const { client } = createClient({
-      session: { list: async () => ({ data: sessions, cursor: {} }) },
-      automation: {
-        list: async ({ sessionID }) => {
-          if (fail && sessionID === "s2") throw new Error("temporary failure")
-          return [makeSchedule({ id: `t-${sessionID}`, sessionID })]
-        },
-      },
-    })
-    const store = new ScheduleStore(client)
-    const first = await store.listAll()
-    assert.equal(first.rows.length, 2)
-
-    fail = true
-    const second = await store.listAll()
-    assert.equal(second.rows.length, 2, "失败会话的旧任务必须保留")
-    assert.equal(second.failures.length, 1)
-    assert.equal(second.failures[0].sessionID, "s2")
-  })
-
-  it("后续刷新成功后恢复完整状态", async () => {
+  it("会话元数据失败后恢复：failures 清零且元数据补齐", async () => {
     let fail = true
-    const sessions = [makeSession({ id: "s1" }), makeSession({ id: "s2" })]
     const { client } = createClient({
-      session: { list: async () => ({ data: sessions, cursor: {} }) },
-      automation: {
-        list: async ({ sessionID }) => {
-          if (fail && sessionID === "s2") throw new Error("temporary failure")
-          return [makeSchedule({ id: `t-${sessionID}`, sessionID })]
+      session: {
+        list: async () => {
+          if (fail) throw new Error("temporary failure")
+          return { data: [makeSession({ id: "s1", title: "定时任务：巡检" })], cursor: {} }
         },
       },
+      automation: { list: async () => [makeSchedule({ id: "t-s1", sessionID: "s1" })] },
     })
     const store = new ScheduleStore(client)
     const partial = await store.listAll()
     assert.equal(partial.failures.length, 1)
+    assert.equal(partial.rows[0].session, undefined)
 
     fail = false
     const complete = await store.listAll()
     assert.equal(complete.failures.length, 0)
-    assert.equal(complete.rows.length, 2)
+    assert.equal(complete.rows.length, 1)
+    assert.equal(complete.rows[0].session?.title, "定时任务：巡检", "恢复后元数据补齐")
     assert.equal(complete.truncated, false)
   })
 
-  it("部分失败不触发任何删除或修改动作", async () => {
+  it("全局 automation.list 失败：抛错且保留上次有效数据", async () => {
+    let fail = false
     const { client, calls } = createClient({
-      session: {
-        list: async () => ({ data: [makeSession({ id: "s1" }), makeSession({ id: "s2" })], cursor: {} }),
-      },
       automation: {
-        list: async ({ sessionID }) => {
-          if (sessionID === "s2") throw new Error("down")
-          return [makeSchedule({ id: "t-s1", sessionID })]
+        list: async () => {
+          if (fail) throw new Error("list down")
+          return [makeSchedule({ id: "t-s1", sessionID: "s1" })]
         },
       },
     })
-    await new ScheduleStore(client).listAll()
+    const store = new ScheduleStore(client)
+    assert.equal((await store.listAll()).rows.length, 1)
+    fail = true
+    await assert.rejects(store.listAll(), /list down/)
+    assert.equal(store.cachedRows().length, 1, "失败不得清空上次有效数据")
     for (const name of ["delete", "pause", "resume", "create"]) {
       assert.equal(hasCall(calls, "automation", name), false, `不得调用 automation.${name}`)
     }
@@ -719,6 +736,66 @@ describe("批次3：官方创建参数透传", () => {
     })
     await Promise.all([store.createSchedule(full), store.createSchedule(full)])
     assert.equal(countOf(calls, "automation", "create"), 1)
+  })
+})
+
+describe("B2.1：Code Action 全链路保留，不降级为 Prompt", () => {
+  it("全局列表读取 code action：code 与 args 原样保留，未被当作 prompt", async () => {
+    const codeAction = { type: "code", code: "return hour() === 9", args: { retries: 3 } }
+    const { client } = createClient({
+      automation: { list: async () => [makeSchedule({ id: "t-code", action: codeAction })] },
+    })
+    const result = await new ScheduleStore(client).listAll()
+    const row = result.rows[0]
+    assert.equal(row.schedule.action.type, "code")
+    assert.deepEqual(row.schedule.action, codeAction, "code/args 必须逐字段原样保留")
+    assert.equal("prompt" in row.schedule.action, false, "code action 不得被注入 prompt 字段")
+  })
+
+  it("pause / resume 返回的 code action 不改变类型", async () => {
+    const codeAction = { type: "code", code: "runCleanup()", args: ["a", "b"] }
+    const { client } = createClient({
+      automation: {
+        list: async () => [makeSchedule({ id: "t-code", action: codeAction, status: "active" })],
+        pause: async () => makeSchedule({ id: "t-code", action: codeAction, status: "paused" }),
+        resume: async () => makeSchedule({ id: "t-code", action: codeAction, status: "active" }),
+      },
+    })
+    const store = new ScheduleStore(client)
+    await store.listAll()
+    const afterPause = await store.pause("t-code")
+    assert.equal(afterPause[0].schedule.action.type, "code")
+    assert.deepEqual(afterPause[0].schedule.action.args, ["a", "b"])
+    const afterResume = await store.resume("t-code")
+    assert.equal(afterResume[0].schedule.action.type, "code")
+    assert.equal(afterResume[0].schedule.action.code, "runCleanup()")
+  })
+
+  it("reconcile 用官方 get 刷新 code action：类型与字段不变", async () => {
+    const codeAction = { type: "code", code: "freshCode()", args: { v: 2 } }
+    const { client } = createClient({
+      automation: {
+        list: async () => [makeSchedule({ id: "t-code", action: { type: "code", code: "old()" } })],
+        get: async () => makeSchedule({ id: "t-code", action: codeAction }),
+      },
+    })
+    const store = new ScheduleStore(client)
+    await store.listAll()
+    const rows = await store.reconcile("t-code")
+    assert.deepEqual(rows[0].schedule.action, codeAction)
+  })
+
+  it("创建结果返回 code action 时原样采纳，不改写类型", async () => {
+    const codeAction = { type: "code", code: "created()", args: { k: 1 } }
+    const { client } = createClient({
+      automation: {
+        create: async () => makeSchedule({ id: "t-new", action: codeAction }),
+      },
+    })
+    const store = new ScheduleStore(client)
+    const created = await store.createSchedule(draft())
+    assert.deepEqual(created.action, codeAction, "创建结果里的 code action 不得被降级")
+    assert.equal(store.cachedRows()[0].schedule.action.type, "code")
   })
 })
 
@@ -864,7 +941,12 @@ describe("批次7 / TASK-07：扫描期间的并发变更不得丢失", () => {
           makeSession({ id: params.sessionID, model: { id: "m1", providerID: "p1" } }),
       },
       automation: {
-        list: async ({ sessionID }) => [makeSchedule({ id: `t-${sessionID}`, sessionID, status: "active" })],
+        // Global list returns all tasks in one call; the sweep gate now lives
+        // in session metadata pagination (below), still after seqAtStart.
+        list: async () => [
+          makeSchedule({ id: "t-s1", sessionID: "s1", status: "active" }),
+          makeSchedule({ id: "t-s2", sessionID: "s2", status: "active" }),
+        ],
         create: async (params) =>
           makeSchedule({ id: "t-created", sessionID: params.sessionID, prompt: createdPrompt(params), status: "active" }),
         pause: async ({ automationID }) => makeSchedule({ id: automationID, sessionID: "s1", status: "paused" }),

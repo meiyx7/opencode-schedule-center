@@ -1,7 +1,7 @@
 import { createSignal, createMemo, For, onCleanup, Show } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
 import type { ScheduleRow } from "../types"
-import { clockText, describeWhen, outcomeLabel, relativeTime } from "./format"
+import { actionText, clockText, describeWhen, outcomeLabel, relativeTime } from "./format"
 import { ScheduleConfig, ScheduleDetail, ScheduleForm, Icon } from "./form"
 import { CSS } from "./styles"
 import type { ScheduleStore } from "../store"
@@ -152,7 +152,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
       if (current !== "all" && row.schedule.status !== current) return false
       if (!needle) return true
       const haystack =
-        `${row.schedule.name ?? ""} ${row.schedule.action.prompt} ${row.sessionTitle}`.toLowerCase()
+        `${row.schedule.name ?? ""} ${actionText(row.schedule.action)} ${row.sessionTitle}`.toLowerCase()
       return haystack.includes(needle)
     })
   })
@@ -367,7 +367,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                 >
                   <div class="sc-card-head">
                     <div class="sc-card-title">
-                      <span class="sc-name">{row.schedule.name?.trim() || row.schedule.action.prompt.slice(0, 40)}</span>
+                      <span class="sc-name">{row.schedule.name?.trim() || actionText(row.schedule.action).slice(0, 40)}</span>
                       <span class={`sc-badge sc-status-${row.schedule.status}`}>
                         {row.schedule.status === "active" ? "进行中" : row.schedule.status === "paused" ? "已暂停" : "已结束"}
                       </span>

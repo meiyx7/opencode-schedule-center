@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
 import type { ConditionDraft, ModelProviderGroup, ScheduleRow, ScheduleWhen, SessionInfo, WhenDraft } from "../types"
-import { clockText, describeCondition, describeWhen, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime } from "./format"
+import { actionArgsText, actionLabel, clockText, describeCondition, describeWhen, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime } from "./format"
 import { Combobox, type ComboOption } from "./combobox"
 import type { ScheduleStore } from "../store"
 
@@ -1262,6 +1262,7 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Cont
   const outcome = outcomeLabel(schedule.lastOutcome)
   const ifText = describeCondition(schedule.if)
   const untilText = describeCondition(schedule.until)
+  const actionArgs = actionArgsText(schedule.action)
   const model = modelRefLabel(props.row.session?.model)
   const agent = props.row.session?.agent?.trim() ?? ""
   const directory = props.row.session?.location?.directory ?? props.row.session?.directory ?? ""
@@ -1337,11 +1338,22 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Cont
           <span class="sc-detail-key">结束条件 until</span>
           <span class="sc-detail-value sc-prompt-text"><span class="sc-detail-text">{untilText}</span></span>
         </Show>
-        <span class="sc-detail-key">提示词</span>
+        <span class="sc-detail-key">{actionLabel(schedule.action)}</span>
         <span class="sc-detail-value sc-prompt-text">
-          <span class="sc-detail-text">{schedule.action.prompt}</span>
-          <CopyButton text={schedule.action.prompt} label="提示词" />
+          <span class="sc-detail-text">
+            {schedule.action.type === "prompt" ? schedule.action.prompt : schedule.action.code}
+          </span>
+          <CopyButton
+            text={schedule.action.type === "prompt" ? schedule.action.prompt : schedule.action.code}
+            label={actionLabel(schedule.action)}
+          />
         </span>
+        <Show when={actionArgs}>
+          <span class="sc-detail-key">代码参数</span>
+          <span class="sc-detail-value sc-prompt-text">
+            <span class="sc-detail-text sc-output-text">{actionArgs}</span>
+          </span>
+        </Show>
         <Show when={schedule.endsAt !== undefined}>
           <span class="sc-detail-key">结束时间</span>
           <span class="sc-detail-value">{clockText(schedule.endsAt)}</span>

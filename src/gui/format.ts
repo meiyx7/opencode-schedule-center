@@ -1,4 +1,24 @@
+import type { AutomationAction } from "@opencode/client/promise"
 import type { ScheduleCondition, ScheduleInfo, ScheduleWhen, WhenDraft } from "../types"
+
+/**
+ * Search/title text for an official action. A code action is labelled as code
+ * and is NEVER presented as a prompt — this keeps code content out of every
+ * "prompt" surface and out of copy-to-clipboard-as-prompt paths.
+ */
+export function actionText(action: AutomationAction): string {
+  return action.type === "prompt" ? action.prompt : `[代码] ${action.code}`
+}
+
+/** Detail-panel label for an action: "提示词" or "代码". */
+export function actionLabel(action: AutomationAction): string {
+  return action.type === "prompt" ? "提示词" : "代码"
+}
+
+/** Serialized args of a code action, or undefined for a prompt action. */
+export function actionArgsText(action: AutomationAction): string | undefined {
+  return action.type === "code" && action.args !== undefined ? JSON.stringify(action.args) : undefined
+}
 
 /** Parse a duration like "90 seconds", "5 minutes", "2 hours", "3 days" into milliseconds. */
 export function durationMs(text: string): number | null {
@@ -289,7 +309,7 @@ export function previewRuns(draft: WhenDraft, now: number, count = 5): number[] 
 }
 
 export function scheduleTitle(schedule: ScheduleInfo): string {
-  return schedule.name?.trim() || schedule.action.prompt.slice(0, 32) || schedule.id
+  return schedule.name?.trim() || actionText(schedule.action).slice(0, 32) || schedule.id
 }
 
 /** Compact label for a session's model pick, e.g. "anthropic/claude-sonnet-5-5 (high)". */

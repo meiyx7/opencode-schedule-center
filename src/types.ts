@@ -5,6 +5,7 @@
 // every official field keeps its SDK type, and the few extra fields are
 // display-only aliases derived from official data for the existing panel.
 import type {
+  AutomationAction,
   AutomationInfo as OfficialAutomationInfo,
   AutomationStatus,
   AutomationOutcome,
@@ -39,8 +40,10 @@ export type ScheduleInfo = Omit<OfficialAutomationInfo, "action" | "trigger" | "
   name?: string
   /** Display projection of the official `trigger`. */
   when: ScheduleWhen
-  /** The panel only ever creates prompt actions; code text is shown as prompt. */
-  action: { type: "prompt"; prompt: string }
+  /** Official action kept verbatim as a discriminated union (prompt | code).
+   *  Code actions are NEVER downgraded to prompt: `code`/`args` stay intact and
+   *  consumers must narrow on `type` before reading action-specific fields. */
+  action: AutomationAction
   /** Display alias of official `expires`. */
   endsAt?: number
   /** No official equivalent. */

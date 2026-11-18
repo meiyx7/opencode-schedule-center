@@ -7,7 +7,8 @@ import type {
 } from "@opencode/client/promise"
 import type { CreateDraft, ModelChoice, ModelProviderGroup, ScheduleInfo, ScheduleRow, SessionInfo, WhenDraft } from "./types"
 
-/** A session whose schedule list could not be read in this sweep. */
+/** A session whose metadata could not be read in this sweep. Automation rows
+ *  are NEVER dropped because of this — sessions are display metadata only. */
 export interface SessionFailure {
   sessionID: string
   reason: string
@@ -16,7 +17,7 @@ export interface SessionFailure {
 /** Result of a full sweep: rows plus explicit markers for each incomplete dimension. */
 export interface ListResult {
   rows: ScheduleRow[]
-  /** Failed sessions keep their previous rows (if any); a failed query is never "no tasks". */
+  /** Failed session-metadata pages; automation visibility is unaffected. */
   failures: SessionFailure[]
   /** Session pagination reached the safety cap while a next cursor still existed. */
   truncated: boolean
@@ -24,25 +25,31 @@ export interface ListResult {
 
 const SESSION_PAGE_SIZE = 200
 const MAX_SESSION_PAGES = 100
-const SCHEDULE_CHUNK_SIZE = 20
 
 /**
- * The official automation API still accepts a sessionID filter on list, so the
- * panel keeps its per-session sweep to preserve the tested safety semantics
- * (partial failures never look like "no tasks"). Sessions are paginated by an
- * opaque cursor; the API gives no snapshot guarantee, so a concurrent
- * add/remove may be missed and is never reported as strongly consistent.
+ * Automation visibility comes solely from the official global
+ * `automation.list()` (no `sessionID` filter). Sessions are read only to enrich
+ * display metadata (title / model / agent / directory); a session read failure
+ * never hides a task. The official list gives no snapshot guarantee, so a
+ * concurrent add/remove may be missed and is never reported as strongly
+ * consistent — a mutation during a sweep is detected via `mutationSeq`.
  */
 export class ScheduleStore {
+  /** Display metadata for sessions, keyed by sessionID. Never a visibility gate. */
   private sessions = new Map<string, SessionInfo>()
-  /** Per-session schedule lists from the last *successful* sweep, keyed by sessionID. */
-  private scheduleCache = new Map<string, ScheduleInfo[]>()
+  /** Last-read automations keyed by their official id (not by session, so tasks
+   *  with no creator sessionID are represented without inventing one). */
+  private automationCache = new Map<string, ScheduleInfo>()
   /** Cached model catalog; one fetch per dialog lifetime is enough. */
   private catalog: ModelProviderGroup[] | undefined
   /** Each draft key keeps its own in-flight create, so A/B/A stays distinct. */
   private inflightCreates = new Map<string, Promise<ScheduleInfo>>()
   /** Bumped by local cache writes so a sweep never overwrites newer local data. */
   private mutationSeq = 0
+  /** Ids locally deleted while a sweep is in flight. An in-flight global
+   *  snapshot still lists them; this tombstone stops the merge from reviving
+   *  a task the user just removed. Cleared once the sweep commits. */
+  private deletedInFlight = new Set<string>()
 
   constructor(private readonly client: OpenCodeClient) {}
 
@@ -52,105 +59,101 @@ export class ScheduleStore {
   }
 
   /**
-   * Follow the official cursor to exhaustion. The 100-page ceiling is a safety
-   * net, not a truncation to hide: if a next cursor remains at the ceiling the
-   * caller is told the sweep is incomplete.
+   * Follow the session cursor to exhaustion, for DISPLAY METADATA only. The
+   * 100-page ceiling is reported via `truncated`; a failed page is recorded in
+   * `failures`. Neither ever hides an automation — a failure here only means
+   * some titles/model/agent may be missing.
    */
-  private async fetchAllSessions(): Promise<{ sessions: Map<string, SessionInfo>; truncated: boolean }> {
+  private async fetchAllSessions(): Promise<{
+    sessions: Map<string, SessionInfo>
+    truncated: boolean
+    failures: SessionFailure[]
+  }> {
     const sessions = new Map<string, SessionInfo>()
+    const failures: SessionFailure[] = []
     let cursor: string | undefined
     let truncated = false
     for (let page = 0; page < MAX_SESSION_PAGES; page += 1) {
-      const response = await this.client.session.list({
-        limit: SESSION_PAGE_SIZE,
-        ...(cursor ? { cursor } : {}),
-      })
+      let response
+      try {
+        response = await this.client.session.list({
+          limit: SESSION_PAGE_SIZE,
+          ...(cursor ? { cursor } : {}),
+        })
+      } catch (error) {
+        failures.push({ sessionID: `page:${page + 1}`, reason: describeError(error) })
+        break // keep the metadata gathered so far; automations are unaffected
+      }
       for (const session of response.data ?? []) sessions.set(session.id, session)
       const next = response.cursor?.next
       if (!next) break
       cursor = next
       if (page === MAX_SESSION_PAGES - 1) truncated = true
     }
-    return { sessions, truncated }
+    return { sessions, truncated, failures }
   }
 
   async refreshSessions(): Promise<void> {
     const { sessions } = await this.fetchAllSessions()
-    this.sessions = sessions
+    // Enrich, never drop: a live session (just-created mount session carrying
+    // model/agent/directory) must survive a metadata refresh.
+    for (const [id, session] of sessions) this.sessions.set(id, session)
   }
 
-  /** Fetch schedules for every known session and return active-first rows. */
+  /**
+   * Fetch the official GLOBAL automation list (no sessionID filter) and return
+   * active-first rows. A task with no creator sessionID is shown with no bound
+   * session — no session is ever invented for it.
+   */
   async listAll(): Promise<ListResult> {
-    // Baseline BEFORE the first await: a create landing anywhere during
-    // session pagination (not just schedule fetching) must be detectable.
+    // Baseline BEFORE the first await: any local mutation landing during the
+    // awaits must not be rolled back by this snapshot.
     const seqAtStart = this.mutationSeq
-    const { sessions, truncated } = await this.fetchAllSessions()
-    const ids = [...sessions.keys()]
 
-    // Build into locals and commit once at the end: a failed sweep keeps the
-    // last good cache, and the page keeps showing the previous rows.
-    const nextCache = new Map<string, ScheduleInfo[]>()
-    for (const id of ids) {
-      const previous = this.scheduleCache.get(id)
-      if (previous) nextCache.set(id, previous)
-    }
-    // Truncated pages were never read: keep their last known rows rather than
-    // silently dropping tasks the user could still see.
-    if (truncated) {
-      for (const [id, previous] of this.scheduleCache) {
-        if (!nextCache.has(id)) nextCache.set(id, previous)
-      }
-    }
-    const failures: SessionFailure[] = []
+    // The authoritative visibility source. A failure here is fatal: it is
+    // rethrown so the page marks the sweep unknown rather than pretending the
+    // list is empty, and the previous cache stays intact.
+    const infos =
+      (await this.client.experimental.automation.list()).map(fromAutomation)
 
-    for (let start = 0; start < ids.length; start += SCHEDULE_CHUNK_SIZE) {
-      const chunk = ids.slice(start, start + SCHEDULE_CHUNK_SIZE)
-      const results = await Promise.allSettled(
-        chunk.map(async (sessionID) =>
-          (await this.client.experimental.automation.list({ sessionID })).map(fromAutomation),
-        ),
-      )
-      for (let index = 0; index < results.length; index += 1) {
-        const result = results[index]
-        const sessionID = chunk[index]
-        if (result.status === "rejected") {
-          failures.push({ sessionID, reason: describeError(result.reason) })
-          continue // previous entry, if any, stays in nextCache
-        }
-        nextCache.set(sessionID, result.value)
-      }
-    }
+    // Session metadata is best-effort and independent of the task list.
+    const { sessions, truncated, failures } = await this.fetchAllSessions()
+
+    const nextCache = new Map<string, ScheduleInfo>()
+    for (const info of infos) nextCache.set(info.id, info)
 
     if (this.mutationSeq === seqAtStart) {
-      // Clean sweep: the snapshot is newer than nothing, adopt it in full —
-      // including session metadata (title / model / agent / directory).
+      // Clean sweep: adopt the fresh global snapshot in full, including the
+      // session metadata gathered this round.
       this.sessions = sessions
-      this.scheduleCache = nextCache
+      this.automationCache = nextCache
     } else {
-      // A create/pause/resume/delete landed mid-sweep. Those local writes are
-      // newer than this snapshot. Never let stale scan data roll them back:
-      //   - schedules: update only entries the live cache has NOT seen;
-      //   - sessions: never drop a live session (a just-created mount session
-      //     carries its model/agent/directory), only add ones we lack.
-      for (const [id, schedules] of nextCache) {
-        if (!this.scheduleCache.has(id)) this.scheduleCache.set(id, schedules)
+      // A create/pause/resume/delete landed mid-sweep. Keep the newer local
+      // state: add only tasks/sessions the live cache has not seen, never
+      // overwrite entries a local mutation already touched.
+      for (const [id, info] of nextCache) {
+        if (!this.automationCache.has(id) && !this.deletedInFlight.has(id)) this.automationCache.set(id, info)
       }
       for (const [id, session] of sessions) {
         if (!this.sessions.has(id)) this.sessions.set(id, session)
       }
     }
-    // Always rebuild from the live sessions map so a newly created mount
-    // session keeps its metadata instead of falling back to a stale snapshot.
-    return { rows: this.rowsFrom(this.sessions, this.scheduleCache), failures, truncated }
+    // This snapshot has been reconciled; tombstones have served their purpose.
+    this.deletedInFlight.clear()
+    return { rows: this.rowsFrom(this.sessions, this.automationCache), failures, truncated }
   }
 
-  private rowsFrom(sessions: Map<string, SessionInfo>, cache: Map<string, ScheduleInfo[]>): ScheduleRow[] {
+  private rowsFrom(sessions: Map<string, SessionInfo>, cache: Map<string, ScheduleInfo>): ScheduleRow[] {
     const rows: ScheduleRow[] = []
-    for (const [sessionID, schedules] of cache) {
-      const session = sessions.get(sessionID)
-      for (const schedule of schedules) {
-        rows.push({ schedule, sessionTitle: session?.title ?? sessionID, session })
-      }
+    for (const schedule of cache.values()) {
+      // Only a real creator sessionID may bind metadata. An empty/absent one
+      // maps to no session — never guess from title or target.
+      const session = schedule.sessionID ? sessions.get(schedule.sessionID) : undefined
+      rows.push({
+        schedule,
+        sessionTitle: session?.title ?? schedule.name ?? schedule.id,
+        ...(session ? { session } : {}),
+      })
     }
     return sortRows(rows)
   }
@@ -161,22 +164,19 @@ export class ScheduleStore {
    * the next explicit refresh still reconciles with the server.
    */
   private patchLocal(scheduleID: string, mutate: (schedule: ScheduleInfo) => void): ScheduleRow[] {
-    for (const [sessionID, schedules] of this.scheduleCache) {
-      const index = schedules.findIndex((schedule) => schedule.id === scheduleID)
-      if (index < 0) continue
-      const next = [...schedules]
-      next[index] = { ...schedules[index], sessionID: schedules[index].sessionID ?? sessionID }
-      mutate(next[index])
-      this.scheduleCache.set(sessionID, next)
+    const current = this.automationCache.get(scheduleID)
+    if (current) {
+      const next = { ...current }
+      mutate(next)
+      this.automationCache.set(scheduleID, next)
       this.mutationSeq += 1
-      break
     }
     return this.cachedRows()
   }
 
-  /** Rebuild rows from the per-session cache (no network). */
+  /** Rebuild rows from the automation cache (no network). */
   private rowsFromCache(): ScheduleRow[] {
-    return this.rowsFrom(this.sessions, this.scheduleCache)
+    return this.rowsFrom(this.sessions, this.automationCache)
   }
 
   /** Public read of the cache, for views that patch instead of re-fetching. */
@@ -326,7 +326,10 @@ export class ScheduleStore {
     }
     if (existing && existing.length > 0) {
       // The server did create the task: adopt it and keep its mount session.
-      const created = existing.find((item) => item.action.prompt === draft.prompt) ?? existing[0]
+      // Match only prompt actions whose text is this draft's prompt; a code
+      // action has no `prompt` field and must not be coerced into one.
+      const created =
+        existing.find((item) => item.action.type === "prompt" && item.action.prompt === draft.prompt) ?? existing[0]
       this.commitCreated(session, created)
       return created
     }
@@ -359,13 +362,8 @@ export class ScheduleStore {
   private commitCreated(session: SessionInfo, schedule: ScheduleInfo): void {
     // `session` is the confirmed server state from createOnce (create response
     // or post-switch read-back). Never overwrite it with the request draft.
-    const stored: SessionInfo = { ...session }
-    this.sessions.set(session.id, stored)
-    const existing = this.scheduleCache.get(session.id) ?? []
-    this.scheduleCache.set(
-      session.id,
-      existing.some((item) => item.id === schedule.id) ? existing : [...existing, schedule],
-    )
+    this.sessions.set(session.id, { ...session })
+    this.automationCache.set(schedule.id, schedule)
     this.mutationSeq += 1
   }
 
@@ -446,29 +444,25 @@ export class ScheduleStore {
 
   /** Remove one cached task (and only it); no-op when already absent. */
   private dropFromCache(scheduleID: string): void {
-    for (const [sessionID, schedules] of this.scheduleCache) {
-      if (!schedules.some((schedule) => schedule.id === scheduleID)) continue
-      this.scheduleCache.set(sessionID, schedules.filter((schedule) => schedule.id !== scheduleID))
+    if (this.automationCache.delete(scheduleID)) {
       this.mutationSeq += 1
-      break
+      this.deletedInFlight.add(scheduleID)
     }
   }
 }
 
 /**
- * Map an official AutomationInfo to the panel's display projection. All fields
- * keep their SDK types; only the three aliased fields are reshaped. Gating
- * conditions and run caps have no official equivalent and are left undefined.
+ * Map an official AutomationInfo to the panel's display projection. Every
+ * official field is preserved with its SDK type — including `action`, kept
+ * verbatim as the official prompt|code discriminated union (a code action is
+ * NEVER downgraded to prompt). Only three fields get display aliases; gating
+ * conditions and run caps have no official equivalent and stay undefined.
  */
 function fromAutomation(info: AutomationInfo): ScheduleInfo {
-  const { trigger, action, expires, lastRunAt, ...rest } = info
+  const { trigger, expires, lastRunAt, ...rest } = info
   return {
     ...rest,
     when: trigger,
-    action:
-      action.type === "prompt"
-        ? { type: "prompt", prompt: action.prompt }
-        : { type: "prompt", prompt: action.code },
     endsAt: expires,
     lastFiredAt: lastRunAt,
   }
