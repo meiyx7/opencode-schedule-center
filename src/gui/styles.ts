@@ -114,7 +114,21 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 }
 .sc-root[data-embedded="true"] .sc-hero { min-height: 98px; }
 /* In the dialog the form should spend the height on content, not chrome. */
-.sc-root[data-embedded="true"] { padding: 0 0 4px; gap: 10px; }
+.sc-root[data-embedded="true"] { max-width: none; padding: 0 0 4px; gap: 10px; }
+
+/* The host caps size="x-large" dialogs at 980x600. Reach into the dialog
+   container (same technique as plugin-hub / usage-center) so the task list
+   and the two-column form get room to breathe. resize: both lets users
+   tune it per screen. */
+[data-component="dialog-v2"][data-size="x-large"]:has(.sc-root[data-embedded="true"]) [data-slot="dialog-container"] {
+  width: min(100vw - 48px, 1200px);
+  height: min(100vh - 80px, 840px);
+  min-width: min(100vw - 48px, 760px);
+  min-height: min(100vh - 80px, 520px);
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  resize: both;
+}
 
 .sc-toolbar {
   display: flex;
@@ -1665,32 +1679,6 @@ select.sc-input {
     opacity: 1;
     transform: none;
   }
-}
-
-.sc-dialog {
-  display: flex;
-  flex-direction: column;
-  width: min(720px, 90vw);
-  max-height: 82vh;
-}
-
-.sc-dialog-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--sc-border);
-}
-
-.sc-dialog-title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.sc-dialog-body {
-  overflow-y: auto;
-  padding-top: 12px;
 }
 
 .sc-pill {
