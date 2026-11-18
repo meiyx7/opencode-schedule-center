@@ -1,4 +1,10 @@
-import type { ModelInfo, OpenCodeClient, ProviderInfo } from "@opencode/client/promise"
+import type {
+  AutomationInfo,
+  ExperimentalAutomationCreateInput,
+  ModelInfo,
+  OpenCodeClient,
+  ProviderInfo,
+} from "@opencode/client/promise"
 import type { CreateDraft, ModelChoice, ModelProviderGroup, ScheduleInfo, ScheduleRow, SessionInfo, WhenDraft } from "./types"
 
 /** A session whose schedule list could not be read in this sweep. */
@@ -21,9 +27,10 @@ const MAX_SESSION_PAGES = 100
 const SCHEDULE_CHUNK_SIZE = 20
 
 /**
- * The schedule API filters every list call by sessionID, so the panel sweeps
- * the session list and merges per-session results. Sessions are paginated by
- * an opaque cursor; the API gives no snapshot guarantee, so a concurrent
+ * The official automation API still accepts a sessionID filter on list, so the
+ * panel keeps its per-session sweep to preserve the tested safety semantics
+ * (partial failures never look like "no tasks"). Sessions are paginated by an
+ * opaque cursor; the API gives no snapshot guarantee, so a concurrent
  * add/remove may be missed and is never reported as strongly consistent.
  */
 export class ScheduleStore {
@@ -99,7 +106,9 @@ export class ScheduleStore {
     for (let start = 0; start < ids.length; start += SCHEDULE_CHUNK_SIZE) {
       const chunk = ids.slice(start, start + SCHEDULE_CHUNK_SIZE)
       const results = await Promise.allSettled(
-        chunk.map((sessionID) => this.client.experimental.schedule.list({ sessionID })),
+        chunk.map(async (sessionID) =>
+          (await this.client.experimental.automation.list({ sessionID })).map(fromAutomation),
+        ),
       )
       for (let index = 0; index < results.length; index += 1) {
         const result = results[index]
@@ -292,27 +301,10 @@ export class ScheduleStore {
       throw reason
     }
 
-    const when: WhenDraft = draft.when
     let response: ScheduleInfo
     try {
-      response = await this.client.experimental.schedule.create({
-        sessionID: session.id,
-        prompt: draft.prompt,
-        ...(draft.name ? { name: draft.name } : {}),
-        when: {
-          ...(when.kind === "in"
-            ? { in: when.in }
-            : when.kind === "at"
-              ? { at: when.at }
-              : when.kind === "every"
-                ? { every: when.every }
-                : { cron: when.cron }),
-          ...(when.tz ? { tz: when.tz } : {}),
-        },
-        ...(draft.if ? { if: draft.if } : {}),
-        ...(draft.until ? { until: draft.until } : {}),
-        ...(draft.ends ? { ends: draft.ends } : {}),
-      })
+      const created = await this.client.experimental.automation.create(buildCreateInput(session.id, draft))
+      response = fromAutomation(created)
     } catch (error) {
       return this.reconcileCreate(confirmedSession, draft, error)
     }
@@ -323,18 +315,18 @@ export class ScheduleStore {
   /**
    * A rejected create does not prove the server did nothing — a lost response
    * (timeout/abort) can hide a successful write. Verify with the official
-   * schedule list before ever touching the mount session.
+   * automation list before ever touching the mount session.
    */
   private async reconcileCreate(session: SessionInfo, draft: CreateDraft, error: unknown): Promise<ScheduleInfo> {
     let existing: ScheduleInfo[] | undefined
     try {
-      existing = await this.client.experimental.schedule.list({ sessionID: session.id })
+      existing = (await this.client.experimental.automation.list({ sessionID: session.id })).map(fromAutomation)
     } catch {
       existing = undefined
     }
     if (existing && existing.length > 0) {
       // The server did create the task: adopt it and keep its mount session.
-      const created = existing.find((item) => item.action?.prompt === draft.prompt) ?? existing[0]
+      const created = existing.find((item) => item.action.prompt === draft.prompt) ?? existing[0]
       this.commitCreated(session, created)
       return created
     }
@@ -409,27 +401,27 @@ export class ScheduleStore {
   }
 
   async pause(scheduleID: string): Promise<ScheduleRow[]> {
-    const updated = await this.client.experimental.schedule.pause({ scheduleID })
+    const updated = fromAutomation(await this.client.experimental.automation.pause({ automationID: scheduleID }))
     return this.patchLocal(scheduleID, (schedule) => Object.assign(schedule, updated))
   }
 
   async resume(scheduleID: string): Promise<ScheduleRow[]> {
-    const updated = await this.client.experimental.schedule.resume({ scheduleID })
+    const updated = fromAutomation(await this.client.experimental.automation.resume({ automationID: scheduleID }))
     return this.patchLocal(scheduleID, (schedule) => Object.assign(schedule, updated))
   }
 
   /**
-   * Delete the schedule only. A display title is never proof of ownership, so
+   * Delete the automation only. A display title is never proof of ownership, so
    * no session is removed here — not even one this plugin created earlier.
    * An unused mount session is harmless and stays under the user's control.
    */
   async remove(scheduleID: string, _sessionID?: string): Promise<void> {
-    await this.client.experimental.schedule.delete({ scheduleID })
+    await this.client.experimental.automation.delete({ automationID: scheduleID })
     this.dropFromCache(scheduleID)
   }
 
   /**
-   * Re-read one task with the official `schedule.get` after a failed operation.
+   * Re-read one task with the official `automation.get` after a failed operation.
    * Unlike a full sweep this touches only the affected task:
    * - still present  -> adopt the server's fresh state into the cache;
    * - not found       -> the task is gone, drop only this cache entry;
@@ -439,11 +431,11 @@ export class ScheduleStore {
   async reconcile(scheduleID: string): Promise<ScheduleRow[]> {
     let fresh: ScheduleInfo
     try {
-      fresh = await this.client.experimental.schedule.get({ scheduleID })
+      fresh = fromAutomation(await this.client.experimental.automation.get({ automationID: scheduleID }))
     } catch (error) {
-      // Duck-type the official ScheduleNotFoundError via its stable `_tag`
+      // Duck-type the official AutomationNotFoundError via its stable `_tag`
       // (a runtime import from the SDK is not available inside plugin GUIs).
-      if ((error as { _tag?: string } | null)?._tag === "ScheduleNotFoundError") {
+      if ((error as { _tag?: string } | null)?._tag === "AutomationNotFoundError") {
         this.dropFromCache(scheduleID)
       }
       // Any other failure is indeterminate: keep the previous rows.
@@ -463,6 +455,64 @@ export class ScheduleStore {
   }
 }
 
+/**
+ * Map an official AutomationInfo to the panel's display projection. All fields
+ * keep their SDK types; only the three aliased fields are reshaped. Gating
+ * conditions and run caps have no official equivalent and are left undefined.
+ */
+function fromAutomation(info: AutomationInfo): ScheduleInfo {
+  const { trigger, action, expires, lastRunAt, ...rest } = info
+  return {
+    ...rest,
+    when: trigger,
+    action:
+      action.type === "prompt"
+        ? { type: "prompt", prompt: action.prompt }
+        : { type: "prompt", prompt: action.code },
+    endsAt: expires,
+    lastFiredAt: lastRunAt,
+  }
+}
+
+/**
+ * Build the official create payload. Two distinct session roles are set on
+ * purpose and must not be confused:
+ *  - `sessionID` is the CREATOR (the mount session this plugin just created);
+ *  - `action.to.session` is the EXECUTION TARGET the prompt is delivered to.
+ * They are the same session here because the plugin gives each task a dedicated
+ * home, but they are independent fields in the API.
+ *
+ * Mapping limits (official API has no equivalent — recorded, not simulated):
+ *  - `ends.times` (run cap): ignored;
+ *  - `if` / `until` (gating conditions): ignored;
+ *  - `in` is expressed as an absolute-offset `at` trigger ("in <duration>").
+ */
+function buildCreateInput(ownerSessionID: string, draft: CreateDraft): ExperimentalAutomationCreateInput {
+  const when: WhenDraft = draft.when
+  const tz = when.tz ? { tz: when.tz } : {}
+  const trigger: ExperimentalAutomationCreateInput["trigger"] =
+    when.kind === "in"
+      ? { type: "at", at: `in ${when.in}`, ...tz }
+      : when.kind === "at"
+        ? { type: "at", at: when.at, ...tz }
+        : when.kind === "every"
+          ? { type: "every", every: when.every, ...tz }
+          : { type: "cron", cron: when.cron, ...tz }
+
+  let expires: string | undefined
+  if (draft.ends?.after) expires = `in ${draft.ends.after}`
+  else if (draft.ends?.at) expires = draft.ends.at
+
+  return {
+    sessionID: ownerSessionID,
+    name: draft.name ?? draft.prompt.slice(0, 60),
+    trigger,
+    action: { type: "prompt", prompt: draft.prompt, to: { session: ownerSessionID } },
+    ...(draft.directory ? { directory: draft.directory } : {}),
+    ...(expires ? { expires } : {}),
+  }
+}
+
 /** Stable identity for duplicate-submit detection; different drafts stay distinct. */
 function draftKey(draft: CreateDraft): string {
   return JSON.stringify({
@@ -479,8 +529,8 @@ function draftKey(draft: CreateDraft): string {
 }
 
 /**
- * How a failed `schedule.create` is classified, based on the ACTUAL error
- * shapes @opencode/client 2.2.5 throws (verified against the shipped SDK):
+ * How a failed `automation.create` is classified, based on the ACTUAL error
+ * shapes @opencode/client 2.3.2 throws (verified against the shipped SDK):
  *  - declared business errors are Error instances carrying a `_tag` property
  *    and `name === _tag` (SDK: `Object.assign(new Error(message), body)`):
  *    InvalidRequestError=400, UnauthorizedError=401, ForbiddenError=403,

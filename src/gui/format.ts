@@ -32,7 +32,10 @@ export function describeWhen(when: ScheduleWhen): string {
   if (when.type === "in") return `${durationLabel(when.in)}后（一次性）`
   if (when.type === "at") return `${clockText(Date.parse(when.at))} 触发（一次性）`
   if (when.type === "every") return `每 ${durationLabel(when.every)}`
-  return describeCron(when.cron)
+  if (when.type === "cron") return describeCron(when.cron)
+  // Official event trigger: fires on an MCP event. The panel never creates one,
+  // but must still describe automations that already exist.
+  return `事件 ${when.server}/${when.event}`
 }
 
 /** Human description of a 5-field cron expression; falls back to the raw text. */

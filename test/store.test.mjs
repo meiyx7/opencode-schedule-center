@@ -15,10 +15,13 @@ function deferred() {
 function makeSchedule(overrides = {}) {
   return {
     id: "t-1",
+    name: "do it",
+    projectID: "prj-1",
     sessionID: "ses-1",
-    when: { type: "every", every: "5 minutes" },
+    directory: "/work",
+    trigger: { type: "every", every: "5 minutes" },
     tz: "Asia/Shanghai",
-    action: { type: "prompt", prompt: "do it" },
+    action: { type: "prompt", prompt: "do it", to: { session: "ses-1" } },
     status: "active",
     runCount: 0,
     time: { created: 1, updated: 1 },
@@ -61,26 +64,31 @@ function createClient(overrides = {}) {
     switchAgent: async () => ({}),
     remove: async () => {},
   }
-  const baseSchedule = {
+  const baseAutomation = {
     create: async (params) => makeSchedule({ sessionID: params.sessionID }),
     list: async () => [],
-    get: async (params) => makeSchedule({ id: params.scheduleID }),
+    get: async (params) => makeSchedule({ id: params.automationID }),
     delete: async () => {},
-    pause: async (params) => makeSchedule({ id: params.scheduleID }),
-    resume: async (params) => makeSchedule({ id: params.scheduleID }),
+    pause: async (params) => makeSchedule({ id: params.automationID }),
+    resume: async (params) => makeSchedule({ id: params.automationID }),
   }
   const session = { ...baseSession, ...(overrides.session ?? {}) }
-  const schedule = { ...baseSchedule, ...(overrides.schedule ?? {}) }
+  const automation = { ...baseAutomation, ...(overrides.automation ?? {}) }
   record(session, "session", calls)
-  record(schedule, "schedule", calls)
+  record(automation, "automation", calls)
   const client = {
     session,
-    experimental: { schedule },
+    experimental: { automation },
     model: { list: async () => ({ data: [] }) },
     provider: { list: async () => ({ data: [] }) },
     agent: { list: async () => ({ data: [] }) },
   }
   return { client, calls }
+}
+
+/** The official create payload carries the prompt inside `action`. */
+function createdPrompt(params) {
+  return params.action?.prompt ?? params.prompt
 }
 
 function countOf(calls, group, name) {
@@ -94,7 +102,7 @@ function hasCall(calls, group, name) {
 async function seededStore({ sessions = [], schedules = {} } = {}) {
   const { client, calls } = createClient({
     session: { list: async () => ({ data: sessions, cursor: {} }) },
-    schedule: { list: async ({ sessionID }) => schedules[sessionID] ?? [] },
+    automation: { list: async ({ sessionID }) => schedules[sessionID] ?? [] },
   })
   const store = new ScheduleStore(client)
   const result = await store.listAll()
@@ -139,7 +147,7 @@ describe("会话安全 / TASK-01", () => {
   it("删除失败保留任务，且不产生会话删除请求", async () => {
     const { client, calls } = createClient({
       session: { list: async () => ({ data: [makeSession({ id: "s1" })], cursor: {} }) },
-      schedule: {
+      automation: {
         list: async () => [makeSchedule({ id: "t1", sessionID: "s1" })],
         delete: async () => {
           throw new Error("delete failed")
@@ -166,7 +174,7 @@ describe("创建与回滚 / TASK-02", () => {
     })
     const store = new ScheduleStore(client)
     await assert.rejects(store.createSchedule(draft()), /session create failed/)
-    assert.equal(hasCall(calls, "schedule", "create"), false)
+    assert.equal(hasCall(calls, "automation", "create"), false)
     assert.equal(hasCall(calls, "session", "remove"), false)
   })
 
@@ -179,7 +187,7 @@ describe("创建与回滚 / TASK-02", () => {
       name: "InvalidRequestError",
     })
     const { client, calls } = createClient({
-      schedule: {
+      automation: {
         create: async () => {
           throw rejection
         },
@@ -205,7 +213,7 @@ describe("创建与回滚 / TASK-02", () => {
 
   it("请求超时但服务端已创建：核对命中后认领任务并保留会话", async () => {
     const { client, calls } = createClient({
-      schedule: {
+      automation: {
         create: async () => {
           throw new Error("timeout")
         },
@@ -222,7 +230,7 @@ describe("创建与回滚 / TASK-02", () => {
 
   it("响应丢失（AbortError）：与超时同样认领，不删会话", async () => {
     const { client, calls } = createClient({
-      schedule: {
+      automation: {
         create: async () => {
           const error = new Error("aborted")
           error.name = "AbortError"
@@ -234,13 +242,13 @@ describe("创建与回滚 / TASK-02", () => {
     const store = new ScheduleStore(client)
     const created = await store.createSchedule(draft())
     assert.equal(created.id, "t-lost-response")
-    assert.equal(hasCall(calls, "schedule", "list"), true, "必须用官方 List API 核对")
+    assert.equal(hasCall(calls, "automation", "list"), true, "必须用官方 List API 核对")
     assert.equal(hasCall(calls, "session", "remove"), false)
   })
 
   it("回滚失败：错误信息同时包含回滚原因与原始原因", async () => {
     const { client } = createClient({
-      schedule: {
+      automation: {
         create: async () => {
           throw Object.assign(new Error("original create rejection"), {
             _tag: "InvalidRequestError",
@@ -273,16 +281,16 @@ describe("创建与回滚 / TASK-02", () => {
     const [a, b] = await Promise.all([first, second])
 
     assert.equal(countOf(calls, "session", "create"), 1)
-    assert.equal(countOf(calls, "schedule", "create"), 1)
+    assert.equal(countOf(calls, "automation", "create"), 1)
     assert.equal(a.id, b.id)
     assert.equal(store.cachedRows().length, 1)
   })
 
   it("不同草稿并发提交不会被单飞吞掉", async () => {
     const { client, calls } = createClient({
-      schedule: {
+      automation: {
         create: async (params) =>
-          makeSchedule({ id: `t-${params.prompt}`, sessionID: params.sessionID, prompt: params.prompt }),
+          makeSchedule({ id: `t-${createdPrompt(params)}`, sessionID: params.sessionID, prompt: createdPrompt(params) }),
       },
     })
     const store = new ScheduleStore(client)
@@ -290,14 +298,14 @@ describe("创建与回滚 / TASK-02", () => {
       store.createSchedule(draft({ prompt: "task A" })),
       store.createSchedule(draft({ prompt: "task B" })),
     ])
-    assert.equal(countOf(calls, "schedule", "create"), 2)
+    assert.equal(countOf(calls, "automation", "create"), 2)
     assert.equal(a.id, "t-task A")
     assert.equal(b.id, "t-task B")
   })
 
   it("核对也失败：结果未知，保留会话并明确报错", async () => {
     const { client, calls } = createClient({
-      schedule: {
+      automation: {
         create: async () => {
           throw new Error("timeout")
         },
@@ -319,7 +327,7 @@ describe("创建与回滚 / TASK-02", () => {
 
   it("超时且核对为空：不删会话，按结果未知处理", async () => {
     const { client, calls } = createClient({
-      schedule: {
+      automation: {
         create: async () => {
           const error = new Error("request timeout")
           error.name = "TimeoutError"
@@ -344,7 +352,7 @@ describe("创建与回滚 / TASK-02", () => {
     const store = new ScheduleStore(client)
     await assert.rejects(store.createSchedule(draft({ model })), /无法确认模型/)
     assert.equal(countOf(calls, "session", "remove"), 1)
-    assert.equal(hasCall(calls, "schedule", "create"), false)
+    assert.equal(hasCall(calls, "automation", "create"), false)
   })
 })
 
@@ -389,7 +397,7 @@ describe("全会话扫描分页 / TASK-03", () => {
           return { data: [makeSession({ id: "s3" })], cursor: {} }
         },
       },
-      schedule: {
+      automation: {
         list: async ({ sessionID }) => [makeSchedule({ id: `t-${sessionID}`, sessionID })],
       },
     })
@@ -425,7 +433,7 @@ describe("全会话扫描分页 / TASK-03", () => {
           return { data: [makeSession({ id: "s1" })], cursor: { next: `cursor-${cursor ?? 1}` } }
         },
       },
-      schedule: {
+      automation: {
         list: async ({ sessionID }) => [makeSchedule({ id: `t-${sessionID}`, sessionID })],
       },
     })
@@ -452,7 +460,7 @@ describe("全会话扫描分页 / TASK-03", () => {
           throw new Error("page failed")
         },
       },
-      schedule: {
+      automation: {
         list: async ({ sessionID }) => [makeSchedule({ id: `t-${sessionID}`, sessionID })],
       },
     })
@@ -468,14 +476,14 @@ describe("全会话扫描分页 / TASK-03", () => {
     let listCount = 0
     const { client } = createClient({
       session: { list: async () => ({ data: [makeSession({ id: "s1" })], cursor: {} }) },
-      schedule: {
+      automation: {
         list: async ({ sessionID }) => {
           listCount += 1
           if (listCount === 1) return [makeSchedule({ id: "t1", sessionID })]
           await gate.promise
           return [makeSchedule({ id: "t1", sessionID })]
         },
-        pause: async (params) => makeSchedule({ id: params.scheduleID, sessionID: "s1", status: "paused" }),
+        pause: async (params) => makeSchedule({ id: params.automationID, sessionID: "s1", status: "paused" }),
       },
     })
     const store = new ScheduleStore(client)
@@ -502,7 +510,7 @@ describe("全会话扫描分页 / TASK-03", () => {
           return { data: [makeSession({ id: "s3" })], cursor: {} }
         },
       },
-      schedule: {
+      automation: {
         list: async ({ sessionID }) => [makeSchedule({ id: `t-${sessionID}`, sessionID })],
       },
     })
@@ -518,7 +526,7 @@ describe("部分失败处理 / TASK-05", () => {
       session: {
         list: async () => ({ data: [makeSession({ id: "s1" }), makeSession({ id: "s2" })], cursor: {} }),
       },
-      schedule: {
+      automation: {
         list: async ({ sessionID }) => {
           if (sessionID === "s2") throw new Error("s2 unavailable")
           return [makeSchedule({ id: `t-${sessionID}`, sessionID })]
@@ -531,14 +539,14 @@ describe("部分失败处理 / TASK-05", () => {
     assert.equal(result.failures.length, 1)
     assert.equal(result.failures[0].sessionID, "s2")
     assert.equal(result.failures[0].reason, "s2 unavailable")
-    assert.equal(hasCall(calls, "schedule", "delete"), false)
+    assert.equal(hasCall(calls, "automation", "delete"), false)
   })
 
   it("多个会话失败：全部失败会话都被记录", async () => {
     const sessions = [1, 2, 3].map((n) => makeSession({ id: `s${n}` }))
     const { client } = createClient({
       session: { list: async () => ({ data: sessions, cursor: {} }) },
-      schedule: {
+      automation: {
         list: async ({ sessionID }) => {
           if (sessionID !== "s1") throw new Error(`${sessionID} down`)
           return [makeSchedule({ id: "t-s1", sessionID })]
@@ -554,7 +562,7 @@ describe("部分失败处理 / TASK-05", () => {
     const sessions = [makeSession({ id: "s1" }), makeSession({ id: "s2" })]
     const { client } = createClient({
       session: { list: async () => ({ data: sessions, cursor: {} }) },
-      schedule: {
+      automation: {
         list: async () => {
           throw new Error("all down")
         },
@@ -570,7 +578,7 @@ describe("部分失败处理 / TASK-05", () => {
     const sessions = [makeSession({ id: "s1" }), makeSession({ id: "s2" })]
     const { client } = createClient({
       session: { list: async () => ({ data: sessions, cursor: {} }) },
-      schedule: {
+      automation: {
         list: async ({ sessionID }) => {
           if (fail && sessionID === "s2") throw new Error("temporary failure")
           return [makeSchedule({ id: `t-${sessionID}`, sessionID })]
@@ -593,7 +601,7 @@ describe("部分失败处理 / TASK-05", () => {
     const sessions = [makeSession({ id: "s1" }), makeSession({ id: "s2" })]
     const { client } = createClient({
       session: { list: async () => ({ data: sessions, cursor: {} }) },
-      schedule: {
+      automation: {
         list: async ({ sessionID }) => {
           if (fail && sessionID === "s2") throw new Error("temporary failure")
           return [makeSchedule({ id: `t-${sessionID}`, sessionID })]
@@ -616,7 +624,7 @@ describe("部分失败处理 / TASK-05", () => {
       session: {
         list: async () => ({ data: [makeSession({ id: "s1" }), makeSession({ id: "s2" })], cursor: {} }),
       },
-      schedule: {
+      automation: {
         list: async ({ sessionID }) => {
           if (sessionID === "s2") throw new Error("down")
           return [makeSchedule({ id: "t-s1", sessionID })]
@@ -625,7 +633,7 @@ describe("部分失败处理 / TASK-05", () => {
     })
     await new ScheduleStore(client).listAll()
     for (const name of ["delete", "pause", "resume", "create"]) {
-      assert.equal(hasCall(calls, "schedule", name), false, `不得调用 schedule.${name}`)
+      assert.equal(hasCall(calls, "automation", name), false, `不得调用 automation.${name}`)
     }
     assert.equal(hasCall(calls, "session", "remove"), false)
   })
@@ -634,25 +642,38 @@ describe("部分失败处理 / TASK-05", () => {
 describe("批次3：官方创建参数透传", () => {
   function createCall(overrides = {}) {
     const { client, calls } = createClient(overrides)
-    return { client, calls, params: () => calls.find((c) => c.group === "schedule" && c.name === "create")?.args[0] }
+    return { client, calls, params: () => calls.find((c) => c.group === "automation" && c.name === "create")?.args[0] }
   }
 
-  it("in 也透传可选 tz", async () => {
+  it("in 折算为官方 at 触发器并透传可选 tz", async () => {
     const { client, params } = createCall()
     await new ScheduleStore(client).createSchedule(
       draft({ when: { kind: "in", in: "30 minutes", tz: "Asia/Shanghai" } }),
     )
-    assert.equal(params().when.in, "30 minutes")
-    assert.equal(params().when.tz, "Asia/Shanghai")
+    assert.equal(params().trigger.type, "at")
+    assert.equal(params().trigger.at, "in 30 minutes")
+    assert.equal(params().trigger.tz, "Asia/Shanghai")
   })
 
   it("未提供 tz 时不发送该字段", async () => {
     const { client, params } = createCall()
     await new ScheduleStore(client).createSchedule(draft())
-    assert.equal("tz" in params().when, false)
+    assert.equal("tz" in params().trigger, false)
   })
 
-  it("if / until 按官方入参结构透传（不带 type 判别字段）", async () => {
+  it("创建者 sessionID 与执行目标 action.to.session 均指向承载会话（语义不混用）", async () => {
+    const { client, params } = createCall()
+    await new ScheduleStore(client).createSchedule(draft())
+    assert.equal(params().sessionID, "new-session")
+    assert.deepEqual(params().action, {
+      type: "prompt",
+      prompt: "do it",
+      to: { session: "new-session" },
+    })
+    assert.equal(params().name, "巡检")
+  })
+
+  it("官方 Automation API 无 if/until 门禁字段：不向入参注入", async () => {
     const { client, params } = createCall()
     await new ScheduleStore(client).createSchedule(
       draft({
@@ -660,17 +681,22 @@ describe("批次3：官方创建参数透传", () => {
         until: { code: "return dayOfWeek() === 5" },
       }),
     )
-    assert.deepEqual(params().if, { run: "git status --porcelain", changes: true })
-    assert.deepEqual(params().until, { code: "return dayOfWeek() === 5" })
-    assert.equal("type" in params().if, false)
-    assert.equal("type" in params().until, false)
+    assert.equal("if" in params(), false)
+    assert.equal("until" in params(), false)
+    assert.equal(params().action.type, "prompt")
   })
 
-  it("ends 三种结束条件各自原样透传", async () => {
-    for (const ends of [{ times: 5 }, { after: "2 hours" }, { at: "2026-12-01T09:00:00+08:00" }]) {
+  it("ends.after/at 折算为官方 expires；times 无官方对应不注入", async () => {
+    const cases = [
+      [{ after: "2 hours" }, "in 2 hours"],
+      [{ at: "2026-12-01T09:00:00+08:00" }, "2026-12-01T09:00:00+08:00"],
+      [{ times: 5 }, undefined],
+    ]
+    for (const [ends, expected] of cases) {
       const { client, params } = createCall()
       await new ScheduleStore(client).createSchedule(draft({ ends }))
-      assert.deepEqual(params().ends, ends)
+      assert.equal(params().expires, expected, `ends=${JSON.stringify(ends)} 的 expires 映射`)
+      assert.equal("ends" in params(), false)
     }
   })
 
@@ -680,7 +706,7 @@ describe("批次3：官方创建参数透传", () => {
     const a = store.createSchedule(draft({ ends: { times: 5 } }))
     const b = store.createSchedule(draft({ ends: { times: 10 } }))
     await Promise.all([a, b])
-    assert.equal(countOf(calls, "schedule", "create"), 2)
+    assert.equal(countOf(calls, "automation", "create"), 2)
   })
 
   it("same full draft (incl. tz/ends/if) still coalesces to one create", async () => {
@@ -692,7 +718,7 @@ describe("批次3：官方创建参数透传", () => {
       if: { run: "test -f /tmp/flag" },
     })
     await Promise.all([store.createSchedule(full), store.createSchedule(full)])
-    assert.equal(countOf(calls, "schedule", "create"), 1)
+    assert.equal(countOf(calls, "automation", "create"), 1)
   })
 })
 
@@ -700,7 +726,7 @@ describe("批次5：生命周期操作与按需对账", () => {
   async function primedStore(scheduleOverrides = {}, getOverride) {
     const { client, calls } = createClient({
       session: { list: async () => ({ data: [makeSession({ id: "ses-1" })], cursor: {} }) },
-      schedule: {
+      automation: {
         list: async () => [makeSchedule({ id: "t1", sessionID: "ses-1", ...scheduleOverrides })],
         ...(getOverride ? { get: getOverride } : {}),
       },
@@ -714,11 +740,11 @@ describe("批次5：生命周期操作与按需对账", () => {
     const { store, calls } = await primedStore()
     const paused = await store.pause("t1")
     assert.equal(paused.find((r) => r.schedule.id === "t1").schedule.status, "active") // mock pause returns active
-    assert.equal(countOf(calls, "schedule", "pause"), 1)
+    assert.equal(countOf(calls, "automation", "pause"), 1)
 
     const c = createClient({
       session: { list: async () => ({ data: [makeSession({ id: "ses-1" })], cursor: {} }) },
-      schedule: {
+      automation: {
         list: async () => [makeSchedule({ id: "t1", sessionID: "ses-1" })],
         pause: async () => { throw new Error("pause down") },
       },
@@ -732,13 +758,13 @@ describe("批次5：生命周期操作与按需对账", () => {
   it("delete 只官方删除，不删 session；失败保留任务", async () => {
     const { store, calls } = await primedStore()
     await store.remove("t1", "ses-1")
-    assert.equal(countOf(calls, "schedule", "delete"), 1)
+    assert.equal(countOf(calls, "automation", "delete"), 1)
     assert.equal(hasCall(calls, "session", "remove"), false, "不得删承载会话")
     assert.equal(store.cachedRows().length, 0)
 
     const c = createClient({
       session: { list: async () => ({ data: [makeSession({ id: "ses-1" })], cursor: {} }) },
-      schedule: {
+      automation: {
         list: async () => [makeSchedule({ id: "t1", sessionID: "ses-1" })],
         delete: async () => { throw new Error("delete down") },
       },
@@ -752,13 +778,13 @@ describe("批次5：生命周期操作与按需对账", () => {
   it("reconcile：任务仍在时以官方 get 值更新缓存", async () => {
     const { store, calls } = await primedStore({ status: "active" }, async () => makeSchedule({ id: "t1", sessionID: "ses-1", status: "paused" }))
     const rows = await store.reconcile("t1")
-    assert.equal(countOf(calls, "schedule", "get"), 1)
+    assert.equal(countOf(calls, "automation", "get"), 1)
     assert.equal(rows.find((r) => r.schedule.id === "t1").schedule.status, "paused")
   })
 
   it("reconcile：官方 not found（_tag）时只移除该任务", async () => {
     const { store } = await primedStore({}, async () => {
-      const e = new Error("not found"); e._tag = "ScheduleNotFoundError"; throw e
+      const e = new Error("not found"); e._tag = "AutomationNotFoundError"; throw e
     })
     const rows = await store.reconcile("t1")
     assert.equal(rows.length, 0)
@@ -792,7 +818,7 @@ describe("批次5：生命周期操作与按需对账", () => {
     })
     const store = new ScheduleStore(client)
     await assert.rejects(store.createSchedule(draft({ agent: "build" })), /无法确认 Agent/)
-    assert.equal(hasCall(calls, "schedule", "create"), false, "不得创建 schedule")
+    assert.equal(hasCall(calls, "automation", "create"), false, "不得创建 automation")
     assert.equal(countOf(calls, "session", "remove"), 1)
   })
 })
@@ -837,12 +863,12 @@ describe("批次7 / TASK-07：扫描期间的并发变更不得丢失", () => {
         get: async (params) =>
           makeSession({ id: params.sessionID, model: { id: "m1", providerID: "p1" } }),
       },
-      schedule: {
+      automation: {
         list: async ({ sessionID }) => [makeSchedule({ id: `t-${sessionID}`, sessionID, status: "active" })],
         create: async (params) =>
-          makeSchedule({ id: "t-created", sessionID: params.sessionID, prompt: params.prompt, status: "active" }),
-        pause: async ({ scheduleID }) => makeSchedule({ id: scheduleID, sessionID: "s1", status: "paused" }),
-        resume: async ({ scheduleID }) => makeSchedule({ id: scheduleID, sessionID: "s1", status: "active" }),
+          makeSchedule({ id: "t-created", sessionID: params.sessionID, prompt: createdPrompt(params), status: "active" }),
+        pause: async ({ automationID }) => makeSchedule({ id: automationID, sessionID: "s1", status: "paused" }),
+        resume: async ({ automationID }) => makeSchedule({ id: automationID, sessionID: "s1", status: "active" }),
         delete: async () => {},
       },
     })
@@ -906,7 +932,7 @@ describe("批次7 / TASK-07：扫描期间的并发变更不得丢失", () => {
     let serverStatus = "active"
     const { client } = createClient({
       session: { list: async () => ({ data: [makeSession({ id: "s1" })], cursor: {} }) },
-      schedule: { list: async () => [makeSchedule({ id: "t1", sessionID: "s1", status: serverStatus })] },
+      automation: { list: async () => [makeSchedule({ id: "t1", sessionID: "s1", status: serverStatus })] },
     })
     const store = new ScheduleStore(client)
     assert.equal((await store.listAll()).rows[0].schedule.status, "active")
@@ -925,10 +951,10 @@ describe("批次7 / TASK-08：多草稿并发去重（按 draftKey 管理在途 
     }
     const { client, calls } = createClient({
       session: { create: async () => makeSession({ id: "new-session" }) },
-      schedule: {
+      automation: {
         create: async (params) => {
-          await gateFor(params.prompt).promise
-          return makeSchedule({ id: `t-${params.prompt}`, sessionID: params.sessionID, prompt: params.prompt })
+          await gateFor(createdPrompt(params)).promise
+          return makeSchedule({ id: `t-${createdPrompt(params)}`, sessionID: params.sessionID, prompt: createdPrompt(params) })
         },
         list: async () => [],
       },
@@ -942,7 +968,7 @@ describe("批次7 / TASK-08：多草稿并发去重（按 draftKey 管理在途 
     const a2 = store.createSchedule(draft({ prompt: "A" }))
     gateFor("A").resolve()
     const [x, y] = await Promise.all([a1, a2])
-    assert.equal(countOf(calls, "schedule", "create"), 1)
+    assert.equal(countOf(calls, "automation", "create"), 1)
     assert.equal(countOf(calls, "session", "create"), 1)
     assert.equal(x, y)
   })
@@ -954,7 +980,7 @@ describe("批次7 / TASK-08：多草稿并发去重（按 draftKey 管理在途 
     gateFor("A").resolve()
     gateFor("B").resolve()
     await Promise.all([a, b])
-    assert.equal(countOf(calls, "schedule", "create"), 2)
+    assert.equal(countOf(calls, "automation", "create"), 2)
   })
 
   it("A/B/A：A 只创建一次，B 一次", async () => {
@@ -965,7 +991,7 @@ describe("批次7 / TASK-08：多草稿并发去重（按 draftKey 管理在途 
     gateFor("A").resolve()
     gateFor("B").resolve()
     const [x, , y] = await Promise.all([a1, b, a2])
-    assert.equal(countOf(calls, "schedule", "create"), 2)
+    assert.equal(countOf(calls, "automation", "create"), 2)
     assert.equal(x.id, y.id, "两次 A 必须拿到同一个结果")
     assert.equal(x, y)
   })
@@ -979,16 +1005,16 @@ describe("批次7 / TASK-08：多草稿并发去重（按 draftKey 管理在途 
     let aAttempts = 0
     const { client, calls } = createClient({
       session: { create: async () => makeSession({ id: "new-session" }) },
-      schedule: {
+      automation: {
         create: async (params) => {
-          await gateFor(params.prompt).promise
-          if (params.prompt === "A") {
+          await gateFor(createdPrompt(params)).promise
+          if (createdPrompt(params) === "A") {
             aAttempts += 1
             if (aAttempts === 1) {
               throw Object.assign(new Error("A rejected"), { _tag: "InvalidRequestError", name: "InvalidRequestError" })
             }
           }
-          return makeSchedule({ id: `t-${params.prompt}`, sessionID: params.sessionID, prompt: params.prompt })
+          return makeSchedule({ id: `t-${createdPrompt(params)}`, sessionID: params.sessionID, prompt: createdPrompt(params) })
         },
         list: async () => [],
       },
@@ -1001,13 +1027,13 @@ describe("批次7 / TASK-08：多草稿并发去重（按 draftKey 管理在途 
     const bResult = await b
     await assert.rejects(a1, (e) => e._tag === "InvalidRequestError")
     assert.equal(bResult.id, "t-B", "B 不受 A 失败影响")
-    assert.equal(countOf(calls, "schedule", "create"), 2)
+    assert.equal(countOf(calls, "automation", "create"), 2)
 
     // After A settled (failed), resubmitting A must be allowed (its key cleared).
     const a2 = store.createSchedule(draft({ prompt: "A" }))
     gateFor("A").resolve()
     assert.equal((await a2).id, "t-A")
-    assert.equal(countOf(calls, "schedule", "create"), 3)
+    assert.equal(countOf(calls, "automation", "create"), 3)
   })
 
   it("A 成功后再次提交 A：允许重新创建（不再复用已 settle 的 Promise）", async () => {
@@ -1015,12 +1041,12 @@ describe("批次7 / TASK-08：多草稿并发去重（按 draftKey 管理在途 
     const a1 = store.createSchedule(draft({ prompt: "A" }))
     gateFor("A").resolve()
     await a1
-    assert.equal(countOf(calls, "schedule", "create"), 1)
+    assert.equal(countOf(calls, "automation", "create"), 1)
     const a2 = store.createSchedule(draft({ prompt: "A" }))
     gateFor("A").resolve()
     const result = await a2
     assert.equal(result.id, "t-A")
-    assert.equal(countOf(calls, "schedule", "create"), 2, "成功后再提交应创建新任务")
+    assert.equal(countOf(calls, "automation", "create"), 2, "成功后再提交应创建新任务")
   })
 
   it("同一草稿包含 tz/ends/if/until 时仍正确去重", async () => {
@@ -1035,7 +1061,7 @@ describe("批次7 / TASK-08：多草稿并发去重（按 draftKey 管理在途 
     const p2 = store.createSchedule({ ...full }) // 结构相同，键相同
     gateFor("do it").resolve()
     const [x, y] = await Promise.all([p1, p2])
-    assert.equal(countOf(calls, "schedule", "create"), 1)
+    assert.equal(countOf(calls, "automation", "create"), 1)
     assert.equal(x, y)
   })
 })
@@ -1107,7 +1133,7 @@ describe("批次7 / TASK-09：创建异常分类与回滚安全", () => {
   /** Drive a create whose schedule.create throws `error`, with a given list result. */
   async function createWith(error, listImpl) {
     const { client, calls } = createClient({
-      schedule: {
+      automation: {
         create: async () => {
           throw error
         },
@@ -1154,7 +1180,7 @@ describe("批次7 / TASK-09：创建异常分类与回滚安全", () => {
   it("schedule.list 核对命中 → 认领任务并保留会话（无论原始错误类别）", async () => {
     const { calls, store } = await (async () => {
       const c = createClient({
-        schedule: {
+        automation: {
           create: async () => {
             throw clientError("UnexpectedStatus", 502)
           },
@@ -1166,7 +1192,7 @@ describe("批次7 / TASK-09：创建异常分类与回滚安全", () => {
       assert.equal(created.id, "adopted")
       return { calls: c.calls, store: s }
     })()
-    assert.equal(countOf(calls, "schedule", "list"), 1)
+    assert.equal(countOf(calls, "automation", "list"), 1)
     assert.equal(countOf(calls, "session", "remove"), 0)
     assert.equal(store.cachedRows().length, 1)
   })
@@ -1242,7 +1268,7 @@ describe("批次8 / TASK-11~13：model 与 Agent 创建确认", () => {
     })
     await assert.rejects(store.createSchedule(draft({ model })), /无法确认模型/)
     assert.equal(countOf(calls, "session", "remove"), 1)
-    assert.equal(hasCall(calls, "schedule", "create"), false)
+    assert.equal(hasCall(calls, "automation", "create"), false)
   })
 
   it("TASK-12：Agent 切换请求失败 → 安全回滚，不创建任务", async () => {
@@ -1254,7 +1280,7 @@ describe("批次8 / TASK-11~13：model 与 Agent 创建确认", () => {
     })
     await assert.rejects(store.createSchedule(draft({ agent: "build" })), /无法确认 Agent/)
     assert.equal(countOf(calls, "session", "remove"), 1)
-    assert.equal(hasCall(calls, "schedule", "create"), false)
+    assert.equal(hasCall(calls, "automation", "create"), false)
   })
 
   it("TASK-11：model 切换后回读仍不匹配 → 安全回滚", async () => {
@@ -1264,7 +1290,7 @@ describe("批次8 / TASK-11~13：model 与 Agent 创建确认", () => {
     })
     await assert.rejects(store.createSchedule(draft({ model })), /无法确认模型/)
     assert.equal(countOf(calls, "session", "remove"), 1)
-    assert.equal(hasCall(calls, "schedule", "create"), false)
+    assert.equal(hasCall(calls, "automation", "create"), false)
   })
 
   it("TASK-12：Agent 切换后回读仍不匹配 → 安全回滚", async () => {
@@ -1274,7 +1300,7 @@ describe("批次8 / TASK-11~13：model 与 Agent 创建确认", () => {
     })
     await assert.rejects(store.createSchedule(draft({ agent: "build" })), /无法确认 Agent/)
     assert.equal(countOf(calls, "session", "remove"), 1)
-    assert.equal(hasCall(calls, "schedule", "create"), false)
+    assert.equal(hasCall(calls, "automation", "create"), false)
   })
 
   it("未指定 model / Agent：不触发多余切换或回读", async () => {

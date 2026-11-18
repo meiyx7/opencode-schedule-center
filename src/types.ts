@@ -1,19 +1,57 @@
-// Schedule domain types come straight from the official SDK — no local mirror
-// that can drift on upgrade. Re-exported under the same names so callers need
-// no change; add a compile-time alias check below to keep this honest.
+// Types are anchored to the real @opencode/client 2.3.2 Automation API surface.
+// The official Schedule* types were removed in 2.3.2, so this module no longer
+// imports them. `ScheduleInfo` below is a DISPLAY PROJECTION of the official
+// AutomationInfo (built by the store), not a re-declaration of an API type:
+// every official field keeps its SDK type, and the few extra fields are
+// display-only aliases derived from official data for the existing panel.
 import type {
-  ScheduleCondition as OfficialScheduleCondition,
-  ScheduleInfo as OfficialScheduleInfo,
-  ScheduleOutcome as OfficialScheduleOutcome,
-  ScheduleStatus as OfficialScheduleStatus,
-  ScheduleWhen as OfficialScheduleWhen,
+  AutomationInfo as OfficialAutomationInfo,
+  AutomationStatus,
+  AutomationOutcome,
+  AutomationTrigger,
 } from "@opencode/client/promise"
 
-export type ScheduleWhen = OfficialScheduleWhen
-export type ScheduleCondition = OfficialScheduleCondition
-export type ScheduleStatus = OfficialScheduleStatus
-export type ScheduleOutcome = OfficialScheduleOutcome
-export type ScheduleInfo = OfficialScheduleInfo
+/** Official status/outcome enums, re-exported under the names the panel uses. */
+export type ScheduleStatus = AutomationStatus
+export type ScheduleOutcome = AutomationOutcome
+
+/** Display projection of the official AutomationTrigger.
+ *  The legacy `in` kind is display-only: official `in` schedules were folded
+ *  into an absolute `at` trigger by the host, so the API never returns it. */
+export type ScheduleWhen = AutomationTrigger | { type: "in"; in: string; tz?: string }
+
+/** Legacy display shape for `if` / `until`. The Automation API has no condition
+ *  fields; these are kept only so the detail view can still render old rows
+ *  and the pure formatter stays testable. The store never populates them. */
+export type ScheduleCondition =
+  | { type: "shell"; run: string; is?: string; matches?: string; changes?: boolean }
+  | { type: "code"; code: string }
+
+/**
+ * Row handed to the panel. Built from the official AutomationInfo by the store:
+ * - official fields keep their SDK types (Omit only removes the two we reshape);
+ * - `when` is the display projection of the official `trigger`;
+ * - `endsAt` mirrors official `expires`, `lastFiredAt` mirrors `lastRunAt`;
+ * - `if` / `until` / `remainingRuns` have NO official equivalent and stay
+ *   undefined — the automation API has neither gating conditions nor run caps.
+ */
+export type ScheduleInfo = Omit<OfficialAutomationInfo, "action" | "trigger" | "name"> & {
+  name?: string
+  /** Display projection of the official `trigger`. */
+  when: ScheduleWhen
+  /** The panel only ever creates prompt actions; code text is shown as prompt. */
+  action: { type: "prompt"; prompt: string }
+  /** Display alias of official `expires`. */
+  endsAt?: number
+  /** No official equivalent. */
+  remainingRuns?: number
+  /** Display alias of official `lastRunAt`. */
+  lastFiredAt?: number
+  /** No official equivalent. */
+  if?: ScheduleCondition
+  /** No official equivalent. */
+  until?: ScheduleCondition
+}
 
 /** A session's model pick, mirroring the API's ModelRef. */
 export interface SessionModelRef {
@@ -48,11 +86,8 @@ export type WhenDraft =
   | { kind: "every"; every: string; tz?: string }
   | { kind: "cron"; cron: string; tz?: string }
 
-/**
- * Condition shape accepted by the official create payload. Unlike the returned
- * `ScheduleCondition` it carries no `type` discriminator — the API tells shell
- * from code by the presence of `run` vs `code`.
- */
+/** Duration/end draft from the form. `times` has no Automation equivalent and
+ *  is deliberately ignored by the store (recorded as an open issue in B0). */
 export type ConditionDraft =
   | { run: string; is?: string; matches?: string; changes?: boolean }
   | { code: string }
@@ -72,16 +107,12 @@ export interface CreateDraft {
 
 /** One selectable model, flattened from the API's ModelInfo. */
 export interface ModelChoice {
-  /** `${providerID}/${id}`, unique across providers. */
   key: string
-  /** The model id a session's ModelRef expects. */
   id: string
-  /** The provider-facing id, useful when it differs from the display id. */
   modelID: string
   providerID: string
   name: string
   status: string
-  /** Variant ids the model exposes; empty when it has none. */
   variants: string[]
 }
 
