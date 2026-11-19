@@ -867,19 +867,33 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   margin: 0;
 }
 
-/* End condition reserves a fixed slot: switching 不限/时长/指定时间 never
-   moves the preview row or the card's bottom edge. */
+/* End condition: the one-shot explanation and the repeating config stack in
+   one grid cell, so switching 延迟/定时 ↔ 间隔/Cron never moves the card bottom.
+   The three detail variants (none/after/at) also stack in a single cell sized
+   to the tallest one at the current width — no fixed height, no overflow:hidden,
+   so controls and error hints are never clipped while the slot stays stable. */
 .sc-end {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  height: 118px;
-  min-height: 118px;
   margin-top: 2px;
   padding-top: 10px;
   border-top: 1px solid var(--sc-border);
 }
 .sc-end-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.sc-end-body { display: grid; }
+.sc-end-body > * { grid-area: 1 / 1; }
+.sc-end-repeating {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.sc-end-repeating.sc-end-state-off,
+.sc-onetime-note.sc-end-state-off {
+  visibility: hidden;
+  pointer-events: none;
+}
 .sc-end-kinds { display: flex; flex-wrap: wrap; gap: 4px; }
 .sc-end .sc-limit {
   margin-top: 0;
@@ -890,14 +904,8 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 .sc-end .sc-limit .sc-input { width: 110px; text-align: left; }
 .sc-end .sc-datetime { flex: 0 1 190px; height: 30px; }
 
-/* Detail area is fixed so the hint/error lines never push the slot taller. */
-.sc-end-detail-slot {
-  height: 45px;
-  min-height: 45px;
-  display: flex;
-  align-items: flex-start;
-  overflow: hidden;
-}
+.sc-end-detail-slot { display: grid; }
+.sc-end-detail-slot > .sc-end-detail { grid-area: 1 / 1; }
 .sc-end-detail {
   display: flex;
   flex-direction: column;
@@ -905,19 +913,18 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   min-width: 0;
   width: 100%;
 }
-.sc-end-detail .sc-label-note,
-.sc-end-detail .sc-hint {
-  margin: 0;
-  font-size: 10px;
+.sc-end-detail.sc-end-detail-off {
+  visibility: hidden;
+  pointer-events: none;
 }
+.sc-end-detail .sc-mode-hint { font-size: 10px; }
 .sc-end-placeholder {
   padding-top: 8px;
   color: var(--sc-faint);
   font-size: 11px;
 }
 
-/* One-shot tasks show a single explanatory line in the same fixed slot, so
-   switching 延迟/定时 ↔ 间隔/Cron keeps the card bottom exactly in place. */
+/* One-shot explanation occupies the same grid cell as the repeating config. */
 .sc-onetime-note {
   display: flex;
   align-items: flex-start;

@@ -231,16 +231,11 @@ export function ScheduleForm(props: {
   // 延迟/定时是一次性任务，执行一次后自动完成——没有"何时停止"可配置。
   // 间隔/Cron 才可能重复运行，才需要把结束条件映射成官方 expires。
   const isRepeating = () => kind() === "every" || kind() === "cron"
-  // Switching to a one-shot mode drops any end condition so a stale "after"/
-  // "at" value can never be submitted as a meaningless expires. Switching back
-  // to a repeating mode simply restores the UI; no end condition is assumed.
-  const chooseKind = (next: WhenDraft["kind"]) => {
-    if (next !== kind() && (next === "in" || next === "at")) {
-      setEndKind("none")
-      setEndAfter("")
-    }
-    setKind(next)
-  }
+  // Switching modes never discards the end-condition draft: hiding it for a
+  // one-shot task is purely visual, and switching back to a repeating mode
+  // restores the previously picked kind/values. buildEnds() is what guarantees
+  // a one-shot task never sends an expires payload.
+  const chooseKind = (next: WhenDraft["kind"]) => setKind(next)
   const draft = createMemo<WhenDraft | null>(() => {
     // The form never sends `tz`: the official API defaults to the host's
     // configured zone. Keeping the field out avoids pinning a task to a zone
@@ -662,32 +657,28 @@ export function ScheduleForm(props: {
                 <span class="sc-label">结束条件</span>
                 <span class="sc-label-note">{isRepeating() ? "可选 · 默认不限" : "一次性任务"}</span>
               </div>
-              <Show
-                when={isRepeating()}
-                fallback={
-                  <p class="sc-onetime-note">
-                    <Icon name="check" /> 一次性任务，执行一次后自动完成，无需设置结束条件
-                  </p>
-                }
-              >
-                <div class="sc-end-kinds" role="group" aria-label="结束条件">
-                  <For each={END_KINDS}>
-                    {(option) => (
-                      <button
-                        type="button" class="sc-chip" classList={{ active: endKind() === option.id }}
-                        onClick={() => setEndKind(option.id)}
-                      >
-                        {option.label}
-                      </button>
-                    )}
-                  </For>
-                </div>
-                <div class="sc-end-detail-slot">
-                  <Show when={endKind() === "none"}>
-                    <span class="sc-end-placeholder">任务持续运行，不设置结束时间</span>
-                  </Show>
-                  <Show when={endKind() === "after"}>
-                    <div class="sc-end-detail">
+              {/* One-shot explanation and repeating config share a single grid
+                  cell: switching modes never moves the card bottom, and the
+                  inactive state is only visually hidden so its draft survives. */}
+              <div class="sc-end-body">
+                <div class="sc-end-repeating" classList={{ "sc-end-state-off": !isRepeating() }} aria-hidden={!isRepeating()}>
+                  <div class="sc-end-kinds" role="group" aria-label="结束条件">
+                    <For each={END_KINDS}>
+                      {(option) => (
+                        <button
+                          type="button" class="sc-chip" classList={{ active: endKind() === option.id }}
+                          onClick={() => setEndKind(option.id)}
+                        >
+                          {option.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                  <div class="sc-end-detail-slot">
+                    <div class="sc-end-detail" classList={{ "sc-end-detail-off": endKind() !== "none" }} aria-hidden={endKind() !== "none"}>
+                      <span class="sc-end-placeholder">任务持续运行，不设置结束时间</span>
+                    </div>
+                    <div class="sc-end-detail" classList={{ "sc-end-detail-off": endKind() !== "after" }} aria-hidden={endKind() !== "after"}>
                       <div class="sc-limit">
                         <span>运行</span>
                         <input
@@ -698,11 +689,9 @@ export function ScheduleForm(props: {
                         />
                         <span>后结束</span>
                       </div>
-                      <Show when={invalidEndAfter()}><p class="sc-hint sc-hint-bad">请输入正整数分钟或合法时长</p></Show>
+                      <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidEndAfter() }}>请输入正整数分钟或合法时长</p>
                     </div>
-                  </Show>
-                  <Show when={endKind() === "at"}>
-                    <div class="sc-end-detail">
+                    <div class="sc-end-detail" classList={{ "sc-end-detail-off": endKind() !== "at" }} aria-hidden={endKind() !== "at"}>
                       <div class="sc-limit">
                         <span>于</span>
                         <input
@@ -712,11 +701,14 @@ export function ScheduleForm(props: {
                         />
                         <span>结束</span>
                       </div>
-                      <Show when={invalidEndAt()}><p class="sc-hint sc-hint-bad">请选择有效时间</p></Show>
+                      <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidEndAt() }}>请选择有效时间</p>
                     </div>
-                  </Show>
+                  </div>
                 </div>
-              </Show>
+                <p class="sc-onetime-note" classList={{ "sc-end-state-off": isRepeating() }} aria-hidden={isRepeating()}>
+                  <Icon name="check" /> 一次性任务，执行一次后自动完成，无需设置结束条件
+                </p>
+              </div>
             </div>
           </section>
         </div>
