@@ -657,25 +657,45 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 0 0 0.5px color-mix(in srgb, var(--sc-border) 60%, transparent);
 }
 
-/* Trigger parameters live in a fixed-height slot. Switching between 延迟/定时/
-   间隔/Cron swaps only the inner content, so the trigger card never changes
-   height. The slot is sized for the tallest mode (Cron) plus a little slack. */
+/* Fixed-slot design without clipping: all four modes stay laid out in one
+   grid cell, only the active one is visible. The slot's height therefore
+   equals the tallest mode at the current container width — so switching tabs
+   never moves the bottom edge, Cron presets may wrap as the column narrows,
+   and nothing can spill over the 预计触发 row. No overflow:hidden anywhere. */
 .sc-trigger-slot {
-  height: 150px;
+  display: grid;
   min-height: 150px;
-  position: relative;
 }
 
 .sc-mode {
+  grid-area: 1 / 1;
   display: flex;
   flex-direction: column;
   gap: 7px;
   width: 100%;
+  min-width: 0;
+}
+
+.sc-mode.sc-mode-hidden {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .sc-mode-desc {
   color: var(--sc-faint);
   font-size: 11px;
+}
+
+/* Validation messages reserve their line up front so showing/hiding an error
+   never changes the slot height. */
+.sc-mode-hint {
+  min-height: 15px;
+  line-height: 15px;
+  margin: 0;
+}
+
+.sc-mode-hint.sc-hint-off {
+  visibility: hidden;
 }
 
 .sc-control {
@@ -894,6 +914,26 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   padding-top: 8px;
   color: var(--sc-faint);
   font-size: 11px;
+}
+
+/* One-shot tasks show a single explanatory line in the same fixed slot, so
+   switching 延迟/定时 ↔ 间隔/Cron keeps the card bottom exactly in place. */
+.sc-onetime-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding-top: 12px;
+  color: var(--sc-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.sc-onetime-note .sc-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  color: var(--sc-accent);
 }
 
 /* Execution: prompt and advanced options. */
@@ -1713,13 +1753,10 @@ select.sc-input {
   }
 }
 
-/* Very narrow containers: the tallest trigger mode wraps its presets onto two
-   lines, so give the slot enough room without letting the preview jump. */
+/* Very narrow containers: presets wrap onto more lines. The grid-stacked slot
+   grows to fit the tallest mode automatically, so only the preview row needs
+   to loosen up here. */
 @container scform (max-width: 420px) {
-  .sc-trigger-slot {
-    height: 168px;
-    min-height: 168px;
-  }
   .sc-preview {
     flex-wrap: wrap;
     height: auto;

@@ -154,7 +154,10 @@ export function ScheduleForm(props: {
   const initialEndAt = defaultAt()
   const [endAt, setEndAt] = createSignal(initialEndAt)
   const [prompt, setPrompt] = createSignal("")
-  const [advanced, setAdvanced] = createSignal(true)
+  // Advanced options start collapsed; the trigger/timing choices are the
+  // primary path. Signals below live in this scope, so expanding/collapsing
+  // never resets a Provider/Model/Variant/Agent/directory pick.
+  const [advanced, setAdvanced] = createSignal(false)
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
 
@@ -225,6 +228,19 @@ export function ScheduleForm(props: {
   }
 
   const [kind, setKind] = useStateKind()
+  // 延迟/定时是一次性任务，执行一次后自动完成——没有"何时停止"可配置。
+  // 间隔/Cron 才可能重复运行，才需要把结束条件映射成官方 expires。
+  const isRepeating = () => kind() === "every" || kind() === "cron"
+  // Switching to a one-shot mode drops any end condition so a stale "after"/
+  // "at" value can never be submitted as a meaningless expires. Switching back
+  // to a repeating mode simply restores the UI; no end condition is assumed.
+  const chooseKind = (next: WhenDraft["kind"]) => {
+    if (next !== kind() && (next === "in" || next === "at")) {
+      setEndKind("none")
+      setEndAfter("")
+    }
+    setKind(next)
+  }
   const draft = createMemo<WhenDraft | null>(() => {
     // The form never sends `tz`: the official API defaults to the host's
     // configured zone. Keeping the field out avoids pinning a task to a zone
@@ -318,6 +334,9 @@ export function ScheduleForm(props: {
    * The store maps it to the official `expires`; the server computes endsAt.
    */
   function buildEnds(): { after?: string; at?: string } | undefined {
+    // One-shot tasks finish on their own; an ends payload would be meaningless
+    // (and could schedule a second stop the user never configured).
+    if (!isRepeating()) return undefined
     if (endKind() === "after") {
       const value = minutesExpression(endAfter())
       return value ? { after: value } : undefined
@@ -349,11 +368,11 @@ export function ScheduleForm(props: {
   const invalidIn = () => kind() === "in" && !(Number(inMinutes()) > 0)
   const invalidEvery = () => kind() === "every" && !(Number(everyMinutes()) > 0)
   const invalidEndAfter = () => {
-    if (endKind() !== "after") return false
+    if (!isRepeating() || endKind() !== "after") return false
     return minutesExpression(endAfter()) === undefined
   }
   const invalidEndAt = () => {
-    if (endKind() !== "at") return false
+    if (!isRepeating() || endKind() !== "at") return false
     return Number.isNaN(Date.parse(endAt()))
   }
   // 绝对时间必须晚于当前时刻；否则到点即触发或永远不触发。
@@ -510,7 +529,7 @@ export function ScheduleForm(props: {
                     aria-selected={kind() === option.id}
                     class="sc-kind-item"
                     classList={{ active: kind() === option.id }}
-                    onClick={() => setKind(option.id)}
+                    onClick={() => chooseKind(option.id)}
                   >
                     <Icon name={option.icon} />
                     <span>{option.label}</span>
@@ -519,121 +538,114 @@ export function ScheduleForm(props: {
               </For>
             </div>
 
+            {/* All four modes stay laid out in one grid cell; only the active
+                one is visible. The slot height is therefore the tallest mode at
+                the current width and never changes on tab switches. */}
             <div class="sc-trigger-slot">
-              <Show when={kind() === "in"}>
-                <div class="sc-mode">
-                  <div class="sc-mode-desc">一次性执行 · 从创建任务后开始倒计时</div>
-                  <div class="sc-field">
-                    <label class="sc-label" for="sc-in">延迟时间</label>
-                    <div class="sc-duration-row">
-                      <div class="sc-duration">
-                        <input
-                          id="sc-in" class="sc-input" type="number" min="1"
-                          aria-label="延迟分钟数" value={inMinutes()}
-                          onInput={(event) => setInMinutes(event.currentTarget.value)}
-                        />
-                        <span class="sc-unit">分钟</span>
-                        <div class="sc-scrollers">
-                          <button type="button" tabIndex={-1} aria-label="减少" onClick={() => stepMinutes(inMinutes, setInMinutes, -1)}>−</button>
-                          <button type="button" tabIndex={-1} aria-label="增加" onClick={() => stepMinutes(inMinutes, setInMinutes, 1)}>+</button>
-                        </div>
+              <div class="sc-mode" classList={{ "sc-mode-hidden": kind() !== "in" }} aria-hidden={kind() !== "in"}>
+                <div class="sc-mode-desc">一次性执行 · 从创建任务后开始倒计时</div>
+                <div class="sc-field">
+                  <label class="sc-label" for="sc-in">延迟时间</label>
+                  <div class="sc-duration-row">
+                    <div class="sc-duration">
+                      <input
+                        id="sc-in" class="sc-input" type="number" min="1"
+                        aria-label="延迟分钟数" value={inMinutes()}
+                        onInput={(event) => setInMinutes(event.currentTarget.value)}
+                      />
+                      <span class="sc-unit">分钟</span>
+                      <div class="sc-scrollers">
+                        <button type="button" tabIndex={-1} aria-label="减少" onClick={() => stepMinutes(inMinutes, setInMinutes, -1)}>−</button>
+                        <button type="button" tabIndex={-1} aria-label="增加" onClick={() => stepMinutes(inMinutes, setInMinutes, 1)}>+</button>
                       </div>
                     </div>
-                    <div class="sc-presets">
-                      <For each={MINUTE_PRESETS}>
-                        {(preset) => (
-                          <button type="button" class="sc-chip" classList={{ active: inMinutes() === preset.value }} onClick={() => setInMinutes(preset.value)}>
-                            {preset.label}
-                          </button>
-                        )}
-                      </For>
-                    </div>
                   </div>
-                  <Show when={invalidIn()}><p class="sc-hint sc-hint-bad">请输入大于 0 的分钟数</p></Show>
-                </div>
-              </Show>
-
-              <Show when={kind() === "at"}>
-                <div class="sc-mode">
-                  <div class="sc-mode-desc">一次性执行 · 在指定日期和时间执行</div>
-                  <div class="sc-field">
-                    <label class="sc-label" for="sc-at">执行时间</label>
-                    <input
-                      id="sc-at" class="sc-input sc-datetime" type="datetime-local"
-                      aria-label="触发时间" value={atTime()}
-                      onInput={(event) => setAtTime(event.currentTarget.value)}
-                    />
-                    <div class="sc-presets">
-                      <For each={AT_PRESETS}>
-                        {(preset) => (
-                          <button type="button" class="sc-chip" onClick={() => setAtTime(preset.at())}>{preset.label}</button>
-                        )}
-                      </For>
-                    </div>
+                  <div class="sc-presets">
+                    <For each={MINUTE_PRESETS}>
+                      {(preset) => (
+                        <button type="button" class="sc-chip" classList={{ active: inMinutes() === preset.value }} onClick={() => setInMinutes(preset.value)}>
+                          {preset.label}
+                        </button>
+                      )}
+                    </For>
                   </div>
-                  <Show when={invalidAt()}><p class="sc-hint sc-hint-bad">请选择晚于当前时间的时间点</p></Show>
                 </div>
-              </Show>
+                <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidIn() }}>请输入大于 0 的分钟数</p>
+              </div>
 
-              <Show when={kind() === "every"}>
-                <div class="sc-mode">
-                  <div class="sc-mode-desc">重复执行 · 按固定时间间隔运行</div>
-                  <div class="sc-field">
-                    <label class="sc-label" for="sc-every">执行间隔</label>
-                    <div class="sc-duration-row">
-                      <div class="sc-duration">
-                        <input
-                          id="sc-every" class="sc-input" type="number" min="1"
-                          aria-label="间隔分钟数" value={everyMinutes()}
-                          onInput={(event) => setEveryMinutes(event.currentTarget.value)}
-                        />
-                        <span class="sc-unit">分钟</span>
-                        <div class="sc-scrollers">
-                          <button type="button" tabIndex={-1} aria-label="减少" onClick={() => stepMinutes(everyMinutes, setEveryMinutes, -1)}>−</button>
-                          <button type="button" tabIndex={-1} aria-label="增加" onClick={() => stepMinutes(everyMinutes, setEveryMinutes, 1)}>+</button>
-                        </div>
+              <div class="sc-mode" classList={{ "sc-mode-hidden": kind() !== "at" }} aria-hidden={kind() !== "at"}>
+                <div class="sc-mode-desc">一次性执行 · 在指定日期和时间执行</div>
+                <div class="sc-field">
+                  <label class="sc-label" for="sc-at">执行时间</label>
+                  <input
+                    id="sc-at" class="sc-input sc-datetime" type="datetime-local"
+                    aria-label="触发时间" value={atTime()}
+                    onInput={(event) => setAtTime(event.currentTarget.value)}
+                  />
+                  <div class="sc-presets">
+                    <For each={AT_PRESETS}>
+                      {(preset) => (
+                        <button type="button" class="sc-chip" onClick={() => setAtTime(preset.at())}>{preset.label}</button>
+                      )}
+                    </For>
+                  </div>
+                </div>
+                <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidAt() }}>请选择晚于当前时间的时间点</p>
+              </div>
+
+              <div class="sc-mode" classList={{ "sc-mode-hidden": kind() !== "every" }} aria-hidden={kind() !== "every"}>
+                <div class="sc-mode-desc">重复执行 · 按固定时间间隔运行</div>
+                <div class="sc-field">
+                  <label class="sc-label" for="sc-every">执行间隔</label>
+                  <div class="sc-duration-row">
+                    <div class="sc-duration">
+                      <input
+                        id="sc-every" class="sc-input" type="number" min="1"
+                        aria-label="间隔分钟数" value={everyMinutes()}
+                        onInput={(event) => setEveryMinutes(event.currentTarget.value)}
+                      />
+                      <span class="sc-unit">分钟</span>
+                      <div class="sc-scrollers">
+                        <button type="button" tabIndex={-1} aria-label="减少" onClick={() => stepMinutes(everyMinutes, setEveryMinutes, -1)}>−</button>
+                        <button type="button" tabIndex={-1} aria-label="增加" onClick={() => stepMinutes(everyMinutes, setEveryMinutes, 1)}>+</button>
                       </div>
                     </div>
-                    <div class="sc-presets">
-                      <For each={MINUTE_PRESETS}>
-                        {(preset) => (
-                          <button type="button" class="sc-chip" classList={{ active: everyMinutes() === preset.value }} onClick={() => setEveryMinutes(preset.value)}>
-                            {preset.label}
-                          </button>
-                        )}
-                      </For>
-                    </div>
                   </div>
-                  <Show when={invalidEvery()}><p class="sc-hint sc-hint-bad">请输入大于 0 的分钟数</p></Show>
+                  <div class="sc-presets">
+                    <For each={MINUTE_PRESETS}>
+                      {(preset) => (
+                        <button type="button" class="sc-chip" classList={{ active: everyMinutes() === preset.value }} onClick={() => setEveryMinutes(preset.value)}>
+                          {preset.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
                 </div>
-              </Show>
+                <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidEvery() }}>请输入大于 0 的分钟数</p>
+              </div>
 
-              <Show when={kind() === "cron"}>
-                <div class="sc-mode">
-                  <div class="sc-mode-desc">重复执行 · 使用 Cron 表达式定义计划</div>
-                  <div class="sc-field">
-                    <label class="sc-label" for="sc-cron">Cron 表达式</label>
-                    <input
-                      id="sc-cron" class="sc-input sc-mono" placeholder="0 9 * * 1-5"
-                      aria-label="Cron 表达式" value={cron()}
-                      onInput={(event) => setCron(event.currentTarget.value)}
-                    />
-                    <div class="sc-cron-examples">示例：<code>0 9 * * 1-5</code> 工作日 09:00</div>
-                    <div class="sc-presets">
-                      <For each={CRON_PRESETS}>
-                        {(preset) => (
-                          <button type="button" class="sc-chip" classList={{ active: cron().trim() === preset.value }} onClick={() => setCron(preset.value)}>
-                            {preset.label}
-                          </button>
-                        )}
-                      </For>
-                    </div>
+              <div class="sc-mode" classList={{ "sc-mode-hidden": kind() !== "cron" }} aria-hidden={kind() !== "cron"}>
+                <div class="sc-mode-desc">重复执行 · 使用 Cron 表达式定义计划</div>
+                <div class="sc-field">
+                  <label class="sc-label" for="sc-cron">Cron 表达式</label>
+                  <input
+                    id="sc-cron" class="sc-input sc-mono" placeholder="0 9 * * 1-5"
+                    aria-label="Cron 表达式" value={cron()}
+                    onInput={(event) => setCron(event.currentTarget.value)}
+                  />
+                  <div class="sc-cron-examples">示例：<code>0 9 * * 1-5</code> 工作日 09:00</div>
+                  <div class="sc-presets">
+                    <For each={CRON_PRESETS}>
+                      {(preset) => (
+                        <button type="button" class="sc-chip" classList={{ active: cron().trim() === preset.value }} onClick={() => setCron(preset.value)}>
+                          {preset.label}
+                        </button>
+                      )}
+                    </For>
                   </div>
-                  <Show when={invalidCron()}>
-                    <p class="sc-hint sc-hint-warn">本地预览无法解析该表达式，仍可提交，以官方校验结果为准</p>
-                  </Show>
                 </div>
-              </Show>
+                <p class="sc-mode-hint sc-hint sc-hint-warn" classList={{ "sc-hint-off": !invalidCron() }}>本地预览无法解析，仍可提交（以官方校验为准）</p>
+              </div>
             </div>
 
             <div class="sc-preview">
@@ -648,54 +660,63 @@ export function ScheduleForm(props: {
             <div class="sc-end">
               <div class="sc-end-head">
                 <span class="sc-label">结束条件</span>
-                <span class="sc-label-note">可选 · 默认不限</span>
+                <span class="sc-label-note">{isRepeating() ? "可选 · 默认不限" : "一次性任务"}</span>
               </div>
-              <div class="sc-end-kinds" role="group" aria-label="结束条件">
-                <For each={END_KINDS}>
-                  {(option) => (
-                    <button
-                      type="button" class="sc-chip" classList={{ active: endKind() === option.id }}
-                      onClick={() => setEndKind(option.id)}
-                    >
-                      {option.label}
-                    </button>
-                  )}
-                </For>
-              </div>
-              <div class="sc-end-detail-slot">
-                <Show when={endKind() === "none"}>
-                  <span class="sc-end-placeholder">任务持续运行，不设置结束时间</span>
-                </Show>
-                <Show when={endKind() === "after"}>
-                  <div class="sc-end-detail">
-                    <div class="sc-limit">
-                      <span>运行</span>
-                      <input
-                        id="sc-end-after" class="sc-input" type="text" placeholder="120 分钟 / 2 hours"
-                        title="可填「120」分钟或官方时长如「2 hours」「3 days」"
-                        aria-label="结束前运行时长" value={endAfter()}
-                        onInput={(event) => setEndAfter(event.currentTarget.value)}
-                      />
-                      <span>后结束</span>
+              <Show
+                when={isRepeating()}
+                fallback={
+                  <p class="sc-onetime-note">
+                    <Icon name="check" /> 一次性任务，执行一次后自动完成，无需设置结束条件
+                  </p>
+                }
+              >
+                <div class="sc-end-kinds" role="group" aria-label="结束条件">
+                  <For each={END_KINDS}>
+                    {(option) => (
+                      <button
+                        type="button" class="sc-chip" classList={{ active: endKind() === option.id }}
+                        onClick={() => setEndKind(option.id)}
+                      >
+                        {option.label}
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <div class="sc-end-detail-slot">
+                  <Show when={endKind() === "none"}>
+                    <span class="sc-end-placeholder">任务持续运行，不设置结束时间</span>
+                  </Show>
+                  <Show when={endKind() === "after"}>
+                    <div class="sc-end-detail">
+                      <div class="sc-limit">
+                        <span>运行</span>
+                        <input
+                          id="sc-end-after" class="sc-input" type="text" placeholder="120 分钟 / 2 hours"
+                          title="可填「120」分钟或官方时长如「2 hours」「3 days」"
+                          aria-label="结束前运行时长" value={endAfter()}
+                          onInput={(event) => setEndAfter(event.currentTarget.value)}
+                        />
+                        <span>后结束</span>
+                      </div>
+                      <Show when={invalidEndAfter()}><p class="sc-hint sc-hint-bad">请输入正整数分钟或合法时长</p></Show>
                     </div>
-                    <Show when={invalidEndAfter()}><p class="sc-hint sc-hint-bad">请输入正整数分钟或合法时长</p></Show>
-                  </div>
-                </Show>
-                <Show when={endKind() === "at"}>
-                  <div class="sc-end-detail">
-                    <div class="sc-limit">
-                      <span>于</span>
-                      <input
-                        id="sc-end-at" class="sc-input sc-datetime" type="datetime-local"
-                        aria-label="结束时间" value={endAt()}
-                        onInput={(event) => setEndAt(event.currentTarget.value)}
-                      />
-                      <span>结束</span>
+                  </Show>
+                  <Show when={endKind() === "at"}>
+                    <div class="sc-end-detail">
+                      <div class="sc-limit">
+                        <span>于</span>
+                        <input
+                          id="sc-end-at" class="sc-input sc-datetime" type="datetime-local"
+                          aria-label="结束时间" value={endAt()}
+                          onInput={(event) => setEndAt(event.currentTarget.value)}
+                        />
+                        <span>结束</span>
+                      </div>
+                      <Show when={invalidEndAt()}><p class="sc-hint sc-hint-bad">请选择有效时间</p></Show>
                     </div>
-                    <Show when={invalidEndAt()}><p class="sc-hint sc-hint-bad">请选择有效时间</p></Show>
-                  </div>
-                </Show>
-              </div>
+                  </Show>
+                </div>
+              </Show>
             </div>
           </section>
         </div>
