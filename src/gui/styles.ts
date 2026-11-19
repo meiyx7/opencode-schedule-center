@@ -511,45 +511,31 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   container-name: scform;
 }
 
-/* The form body is a single column by default and folds into two columns on a
-   wide container (the dialog / settings page): the title + trigger on the left,
-   execution on the right. The execution card starts at the top so the dialog
-   does not waste a full-width title row. */
+/* Form body stacks on narrow containers and becomes a two-column grid on wide
+   ones. The columns stretch so 任务内容 and 触发配置 always share a bottom
+   edge; advanced options sit below the grid on their own full-width row. */
 .sc-form-body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
 }
 
-.sc-form-main {
+.sc-form-columns {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
 }
 
 @container scform (min-width: 700px) {
-  .sc-form-body {
+  .sc-form-columns {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas:
-      "main exec"
-      "error error";
-    gap: 14px;
-    align-items: start;
+    gap: 12px;
+    /* Both cards end on one line regardless of which has more content. */
+    align-items: stretch;
   }
-
-  .sc-form-body .sc-form-main {
-    grid-area: main;
-  }
-  .sc-form-body .sc-exec-section {
-    grid-area: exec;
-    /* Stretch to the left column's height so both cards end on one line; the
-       prompt textarea inside grows to fill the extra room. */
-    align-self: stretch;
-  }
-  .sc-form-body .sc-form-error { grid-area: error; }
 }
 
 /* Name is a boxed card like 触发/执行, just tighter horizontally: same border,
@@ -671,52 +657,23 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 0 0 0.5px color-mix(in srgb, var(--sc-border) 60%, transparent);
 }
 
-/* Contextual panel under the segmented control. It is its own container so the
-   controls + next-run preview sit side by side only when there is room, and
-   stack when the panel lands in a narrow (two-column form) column. */
-.sc-panel {
-  padding: 10px;
-  border: 1px solid color-mix(in srgb, var(--sc-border) 70%, transparent);
-  border-radius: 11px;
-  background: var(--sc-layer, color-mix(in srgb, var(--sc-muted) 4%, transparent));
-  container-type: inline-size;
-  container-name: scpanel;
+/* Trigger parameters live in a fixed-height slot. Switching between 延迟/定时/
+   间隔/Cron swaps only the inner content, so the trigger card never changes
+   height. The slot is sized for the tallest mode (Cron) plus a little slack. */
+.sc-trigger-slot {
+  height: 150px;
+  min-height: 150px;
+  position: relative;
 }
 
-.sc-panel-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-}
-
-@container scpanel (min-width: 500px) {
-  .sc-panel-grid {
-    grid-template-columns: minmax(0, 1fr) 224px;
-    gap: 14px;
-  }
-}
-
-.sc-panel-main {
+.sc-mode {
   display: flex;
   flex-direction: column;
-  gap: 9px;
-  min-width: 0;
+  gap: 7px;
+  width: 100%;
 }
 
-.sc-panel-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.sc-panel-label {
-  color: var(--sc-muted);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.sc-panel-hint {
+.sc-mode-desc {
   color: var(--sc-faint);
   font-size: 11px;
 }
@@ -732,6 +689,22 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
+}
+
+.sc-duration-row {
+  display: flex;
+}
+
+.sc-cron-examples {
+  color: var(--sc-faint);
+  font-size: 11px;
+}
+.sc-cron-examples code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--sc-layer-2, color-mix(in srgb, var(--sc-muted) 8%, transparent));
+  color: var(--sc-muted);
+  font-size: 11px;
 }
 
 .sc-duration {
@@ -765,8 +738,10 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   pointer-events: none;
 }
 
-.sc-datetime {
-  flex: 0 0 194px;
+.sc-input.sc-datetime {
+  width: 100%;
+  max-width: 240px;
+  flex: 0 0 auto;
   height: 36px;
 }
 
@@ -810,71 +785,39 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   outline-offset: 1px;
 }
 
-/* Live next-run preview beside the timing controls. */
-.sc-next {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 7px 12px;
-  border: 1px solid color-mix(in srgb, var(--sc-border) 70%, transparent);
-  border-radius: 9px;
-  background: var(--sc-card);
-}
-
-.sc-next-head {
+/* Expected trigger: its own dedicated row with a fixed height. */
+.sc-preview {
   display: flex;
   align-items: center;
-  gap: 5px;
-  color: var(--sc-faint);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  justify-content: space-between;
+  gap: 12px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--sc-accent) 16%, var(--sc-border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--sc-accent) 5%, var(--sc-card));
+  color: var(--sc-muted);
+  font-size: 11.5px;
 }
 
-.sc-next-head .sc-icon {
-  width: 12px;
-  height: 12px;
+.sc-preview > span {
+  flex: 0 0 auto;
 }
 
-.sc-next-primary {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.sc-next-primary b {
-  color: var(--sc-strong);
-  font-size: 13px;
+.sc-preview strong {
+  overflow: hidden;
+  color: var(--sc-accent);
+  font-size: 12px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.sc-next-primary em {
-  color: var(--sc-accent);
-  font-size: 11px;
-  font-style: normal;
-}
-
-.sc-next-more {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.sc-next-chip {
-  padding: 1px 6px;
-  border-radius: 5px;
-  background: var(--sc-layer-2, color-mix(in srgb, var(--sc-muted) 8%, transparent));
-  color: var(--sc-muted);
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-}
-
-.sc-next-empty {
-  color: var(--sc-red);
-  font-size: 11.5px;
+.sc-preview-invalid {
+  color: var(--sc-red, #e11d48) !important;
 }
 
 .sc-limit {
@@ -904,14 +847,17 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   margin: 0;
 }
 
-/* End condition (after/at) inside the preview aside. */
+/* End condition reserves a fixed slot: switching 不限/时长/指定时间 never
+   moves the preview row or the card's bottom edge. */
 .sc-end {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: auto;
+  height: 118px;
+  min-height: 118px;
+  margin-top: 2px;
   padding-top: 10px;
-  border-top: 1px dashed var(--sc-border);
+  border-top: 1px solid var(--sc-border);
 }
 .sc-end-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .sc-end-kinds { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -921,12 +867,34 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   border-top: 0;
   flex-wrap: wrap;
 }
-.sc-end .sc-limit .sc-input { width: 92px; text-align: left; }
-.sc-end .sc-datetime { flex: 0 1 168px; height: 28px; }
+.sc-end .sc-limit .sc-input { width: 110px; text-align: left; }
+.sc-end .sc-datetime { flex: 0 1 190px; height: 30px; }
 
-/* Timezone input under the four trigger modes. */
-.sc-tz-field { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
-.sc-tz-field .sc-input { height: 34px; }
+/* Detail area is fixed so the hint/error lines never push the slot taller. */
+.sc-end-detail-slot {
+  height: 45px;
+  min-height: 45px;
+  display: flex;
+  align-items: flex-start;
+  overflow: hidden;
+}
+.sc-end-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  width: 100%;
+}
+.sc-end-detail .sc-label-note,
+.sc-end-detail .sc-hint {
+  margin: 0;
+  font-size: 10px;
+}
+.sc-end-placeholder {
+  padding-top: 8px;
+  color: var(--sc-faint);
+  font-size: 11px;
+}
 
 /* Execution: prompt and advanced options. */
 .sc-field {
@@ -961,28 +929,48 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 }
 
 .sc-input.sc-textarea {
-  min-height: 92px;
+  min-height: 150px;
   height: auto;
   padding: 10px 12px;
   line-height: 1.6;
   resize: vertical;
 }
 
-.sc-exec-section {
-  gap: 10px;
+/* Left column: the prompt field grows to fill whatever height the paired
+   trigger card needs, so both cards end on one line. */
+.sc-content-section {
+  gap: 12px;
 }
-
-/* Let the prompt textarea soak up the height the exec card gains when the two
-   columns are stretched to equal height. */
-.sc-exec-section .sc-textarea {
+.sc-content-section .sc-prompt-field {
   flex: 1;
-  min-height: 92px;
+  min-height: 0;
+}
+.sc-content-section .sc-textarea {
+  flex: 1;
+  min-height: 150px;
 }
 
+.sc-required {
+  color: var(--sc-red, #e11d48);
+  font-weight: 600;
+}
+
+.sc-prompt-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--sc-faint);
+  font-size: 11px;
+}
+
+/* Advanced options are a full-width card below the two columns. Expanding it
+   never changes the columns' shared height. */
+.sc-advanced-section {
+  gap: 6px;
+}
 .sc-advanced-wrap {
-  margin-top: 2px;
-  padding-top: 8px;
-  border-top: 1px solid var(--sc-border);
+  display: flex;
+  flex-direction: column;
 }
 
 .sc-advanced-toggle {
@@ -1720,12 +1708,26 @@ select.sc-input {
 }
 
 @media (max-width: 720px) {
-  .sc-panel {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .sc-form-status {
     display: none;
+  }
+}
+
+/* Very narrow containers: the tallest trigger mode wraps its presets onto two
+   lines, so give the slot enough room without letting the preview jump. */
+@container scform (max-width: 420px) {
+  .sc-trigger-slot {
+    height: 168px;
+    min-height: 168px;
+  }
+  .sc-preview {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 44px;
+    padding: 7px 10px;
+  }
+  .sc-preview strong {
+    text-align: left;
   }
 }
 
