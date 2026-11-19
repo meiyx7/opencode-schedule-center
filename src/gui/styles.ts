@@ -38,6 +38,10 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   gap: 12px;
   color: var(--sc-strong);
   font-size: 13px;
+  /* Breakpoints follow the rendered content width, not the viewport: the
+     dialog is user-resizable and its padding is outside this element. */
+  container-type: inline-size;
+  container-name: scroot;
 }
 
 .sc-root *, .sc-root *::before, .sc-root *::after { box-sizing: border-box; }
@@ -166,9 +170,28 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 }
 
 .sc-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  align-items: start;
+}
+
+/* Two columns once the content area can give each card ~444px — enough for
+   the name, status badge and two action buttons while the metadata and
+   advanced-option chips still wrap comfortably. The container is the page
+   root, so dialog padding, the settings page max-width and user resizing are
+   all reflected in the measurement. */
+@container scroot (min-width: 900px) {
+  .sc-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  /* Expanded detail (trigger, prompt, output, config chips) takes the whole
+     row instead of staying trapped in one column. */
+  .sc-card.expanded {
+    grid-column: 1 / -1;
+  }
 }
 
 .sc-card {
@@ -178,6 +201,7 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
   background: var(--sc-card);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   cursor: pointer;
@@ -665,7 +689,7 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   gap: 12px;
 }
 
-@container scpanel (min-width: 520px) {
+@container scpanel (min-width: 500px) {
   .sc-panel-grid {
     grid-template-columns: minmax(0, 1fr) 224px;
     gap: 14px;
