@@ -5,7 +5,7 @@ import { actionArgsText, actionLabel, clockText, describeWhen, dirName, isValidC
 import { Combobox, type ComboOption } from "./combobox"
 import type { ScheduleStore } from "../store"
 
-type IconName = "clock" | "calendar" | "repeat" | "terminal" | "sliders" | "check" | "chevron" | "spark" | "warn"
+type IconName = "clock" | "calendar" | "repeat" | "terminal" | "sliders" | "check" | "chevron" | "spark" | "warn" | "search" | "link"
 type EndKind = "none" | "after" | "at"
 
 const WHEN_KINDS: Array<{ id: WhenDraft["kind"]; label: string; icon: IconName }> = [
@@ -113,6 +113,14 @@ export function Icon(props: { name: IconName }) {
           <path d="M8 6.4v3.2" />
           <path d="M8 11.6h.01" />
         </Match>
+        <Match when={props.name === "search"}>
+          <circle cx="7.1" cy="7.1" r="4.4" />
+          <path d="M10.4 10.4L13.6 13.6" />
+        </Match>
+        <Match when={props.name === "link"}>
+          <path d="M6.4 9.6a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 0 0-3.7-3.7l-.7.7" />
+          <path d="M9.6 6.4a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 0 0 3.7 3.7l.7-.7" />
+        </Match>
       </Switch>
     </svg>
   )
@@ -139,6 +147,15 @@ export function ScheduleForm(props: {
   const [directory, setDirectory] = createSignal("")
   const [customDir, setCustomDir] = createSignal(false)
   const [name, setName] = createSignal("")
+  // Whether the current name was auto-filled from a bound session. When the
+  // user edits the name by hand this clears, so "改回新建" never wipes input
+  // the user actually typed.
+  const [nameFromSession, setNameFromSession] = createSignal(false)
+  // Session source: empty = create a dedicated mount session (default);
+  // non-empty sessionID = bind the prompt to an existing session the user owns.
+  const [bindSession, setBindSession] = createSignal("")
+  const [bindSessions, setBindSessions] = createSignal<SessionInfo[]>([])
+  const [bindPickerOpen, setBindPickerOpen] = createSignal(false)
   const [inMinutes, setInMinutes] = createSignal("30")
   // 记住打开表单时的默认值；dirty 不能拿“此刻 + 1 小时”当基线，否则时间流逝本身会把表单变脏。
   const initialAt = defaultAt()
@@ -170,7 +187,27 @@ export function ScheduleForm(props: {
     else setModelHint("模型列表加载失败，将使用会话默认模型")
     if (agentList.status === "fulfilled") setAgents(agentList.value)
     if (directoryList.status === "fulfilled") setDirectories(directoryList.value)
+    // Existing sessions for the "bind to session" picker. Best-effort: a
+    // failure here only hides the option, it never blocks normal creation.
+    try {
+      const response = await props.store.api.session.list({ limit: 100 })
+      setBindSessions(response.data ?? [])
+    } catch {
+      // leave the picker empty; default mount-session flow is unaffected
+    }
   })
+
+  const bound = () => bindSession() !== ""
+  const selectedBindSession = createMemo(() => bindSessions().find((session) => session.id === bindSession()))
+  const bindSessionOptions = createMemo<ComboOption[]>(() => [
+    { value: "", label: "新建专用会话", note: "默认 · 自动创建承载会话" },
+    ...bindSessions().map((session) => ({
+      value: session.id,
+      label: session.title?.trim() || session.id,
+      note: session.directory ? dirName(session.directory) : undefined,
+      keywords: session.id,
+    })),
+  ])
 
   const providerOptions = createMemo<ComboOption[]>(() => [
     { value: "", label: "跟随会话", note: "默认模型，不指定" },
@@ -277,13 +314,17 @@ export function ScheduleForm(props: {
       const selected = selectedModel()
       const dir = directory().trim()
       const ends = buildEnds()
+      // Bound mode reuses the chosen session as-is: model/agent/directory
+      // belong to that session, so they are deliberately NOT sent (sending
+      // them would either reconfigure the user's session or conflict with it).
       await props.store.createSchedule({
         sessionID: "",
+        ...(bound() ? { bindSessionID: bindSession() } : {}),
         name: name().trim() || undefined,
         when: draft()!,
         prompt: prompt().trim(),
         ...(ends ? { ends } : {}),
-        ...(selected
+        ...(!bound() && selected
           ? {
               model: {
                 id: selected.id,
@@ -292,8 +333,8 @@ export function ScheduleForm(props: {
               },
             }
           : {}),
-        ...(agent() ? { agent: agent() } : {}),
-        ...(dir ? { directory: dir } : {}),
+        ...(!bound() && agent() ? { agent: agent() } : {}),
+        ...(!bound() && dir ? { directory: dir } : {}),
       })
       props.onCreated()
     } catch (cause) {
@@ -394,8 +435,10 @@ export function ScheduleForm(props: {
   const statusText = () => {
     if (draftWhen() === null) return "触发时间无效，请检查设置"
     const first = previewRunsLive()[0]
-    // 创建后会自动开一个承载会话，这是定时任务的运行载体，提示里说清楚。
-    const sessionNote = "创建后将自动新建一个会话作为任务载体"
+    // 创建后会自动开一个承载会话；绑定模式则复用所选会话，提示要说清归属。
+    const sessionNote = bound()
+      ? `将绑定到会话「${selectedBindSession()?.title?.trim() || bindSession()}」`
+      : "创建后将自动新建一个会话作为任务载体"
     if (prompt().trim().length === 0) return `填写提示词后即可创建 · ${sessionNote}`
     // Local preview is an estimate, never the official nextDueAt.
     if (!first) return `即将创建 · ${sessionNote}`
@@ -409,6 +452,7 @@ export function ScheduleForm(props: {
     () =>
       prompt().trim().length > 0 ||
       name().trim().length > 0 ||
+      bindSession() !== "" ||
       providerID() !== "" ||
       modelKey() !== "" ||
       variant() !== "" ||
@@ -454,15 +498,82 @@ export function ScheduleForm(props: {
 
             <div class="sc-field">
               <label class="sc-label" for="sc-name">
-                任务名称 <span class="sc-label-note">选填 · 留空用提示词开头</span>
+                任务名称 <span class="sc-label-note">选填 · 点右侧图标可选择已有会话</span>
               </label>
-              <input
-                id="sc-name"
-                class="sc-input sc-name-input"
-                placeholder="例如：每日依赖检查"
-                value={name()}
-                onInput={(event) => setName(event.currentTarget.value)}
-              />
+              <div class="sc-name-row">
+                <input
+                  id="sc-name"
+                  class="sc-input sc-name-input"
+                  placeholder={bound() ? "已填入会话名称，可修改" : "例如：每日依赖检查"}
+                  value={name()}
+                  onInput={(event) => {
+                    setName(event.currentTarget.value)
+                    setNameFromSession(false)
+                  }}
+                />
+                <button
+                  type="button"
+                  class="sc-session-search"
+                  classList={{ active: bound() || bindPickerOpen() }}
+                  title="绑定到已有会话"
+                  aria-label="绑定到已有会话"
+                  aria-expanded={bindPickerOpen()}
+                  onClick={() => setBindPickerOpen(!bindPickerOpen())}
+                >
+                  <Icon name={bound() ? "link" : "search"} />
+                </button>
+              </div>
+              <div class="sc-session-source">
+                <span class="sc-session-source-label">
+                  {bound() ? "运行会话" : "运行会话 · 新建专用"}
+                </span>
+                <span class="sc-session-source-value">
+                  {bound() ? selectedBindSession()?.title?.trim() || bindSession() : "任务触发时自动打开独立会话"}
+                </span>
+                <Show when={bound()}>
+                  <button
+                    type="button"
+                    class="sc-link-button"
+                    onClick={() => {
+                      // Only clear a name that WE filled from the session; keep
+                      // anything the user typed after binding.
+                      if (nameFromSession()) setName("")
+                      setNameFromSession(false)
+                      setBindSession("")
+                      setBindPickerOpen(false)
+                    }}
+                  >
+                    改回新建
+                  </button>
+                </Show>
+              </div>
+              <Show when={bindPickerOpen()}>
+                <div class="sc-session-picker">
+                  <Combobox
+                    id="sc-bind-session"
+                    value={bindSession()}
+                    options={bindSessionOptions()}
+                    placeholder="搜索会话标题或 ID"
+                    emptyText="没有匹配的会话"
+                    autoOpen
+                    onSelect={(value) => {
+                      setBindSession(value)
+                      setBindPickerOpen(false)
+                      // Fill the visible name box with the chosen session's
+                      // title so the selection is obvious. Only overwrite a
+                      // name that is empty or was itself filled from a session;
+                      // never clobber a name the user typed by hand.
+                      if (value) {
+                        const title = bindSessions().find((session) => session.id === value)?.title?.trim()
+                        if (title && (!name().trim() || nameFromSession())) {
+                          setName(title)
+                          setNameFromSession(true)
+                        }
+                      }
+                    }}
+                  />
+                </div>
+              </Show>
             </div>
 
             <div class="sc-field sc-prompt-field">
@@ -699,12 +810,16 @@ export function ScheduleForm(props: {
           </section>
         </div>
 
-        <section class="sc-section sc-advanced-section">
+        <section class="sc-section sc-advanced-section" classList={{ "sc-advanced-disabled": bound() }}>
           <div class="sc-advanced-wrap">
+          <Show when={bound()}>
+            <p class="sc-advanced-locked">已绑定已有会话，以下选项由该会话决定，此处不可修改。</p>
+          </Show>
           <button
             type="button"
             class="sc-advanced-toggle"
             aria-expanded={advanced()}
+            disabled={bound()}
             onClick={() => setAdvanced(!advanced())}
           >
             <span class="sc-advanced-icon">
@@ -733,6 +848,7 @@ export function ScheduleForm(props: {
                     options={providerOptions()}
                     placeholder="选择或搜索"
                     emptyText="没有匹配的 Provider"
+                    disabled={bound()}
                     onSelect={selectProvider}
                   />
                 </div>
@@ -747,7 +863,7 @@ export function ScheduleForm(props: {
                     id="sc-model"
                     value={modelKey()}
                     options={modelOptions()}
-                    disabled={!providerID()}
+                    disabled={bound() || !providerID()}
                     placeholder={providerID() ? "搜索模型" : "请先选择 Provider"}
                     emptyText="没有匹配的模型"
                     onSelect={selectModel}
@@ -764,7 +880,7 @@ export function ScheduleForm(props: {
                     id="sc-variant"
                     class="sc-input"
                     value={variant()}
-                    disabled={!selectedModel() || variants().length === 0}
+                    disabled={bound() || !selectedModel() || variants().length === 0}
                     onChange={(event) => setVariant(event.currentTarget.value)}
                   >
                     <option value="">默认</option>
@@ -781,6 +897,7 @@ export function ScheduleForm(props: {
                       id="sc-agent"
                       class="sc-input"
                       value={agent()}
+                      disabled={bound()}
                       onChange={(event) => setAgent(event.currentTarget.value)}
                     >
                       <option value="">跟随会话</option>
@@ -797,6 +914,7 @@ export function ScheduleForm(props: {
                     <button
                       type="button"
                       class="sc-link-button"
+                      disabled={bound()}
                       onClick={() => {
                         if (customDir()) {
                           setCustomDir(false)
@@ -816,6 +934,7 @@ export function ScheduleForm(props: {
                         id="sc-directory"
                         class="sc-input"
                         value={directory()}
+                        disabled={bound()}
                         onChange={(event) => setDirectory(event.currentTarget.value)}
                       >
                         <option value="">当前项目目录</option>
@@ -828,6 +947,7 @@ export function ScheduleForm(props: {
                       class="sc-input sc-mono"
                       placeholder="/absolute/path/to/project"
                       value={directory()}
+                      disabled={bound()}
                       onInput={(event) => setDirectory(event.currentTarget.value)}
                     />
                   </Show>
@@ -1009,91 +1129,112 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Cont
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
     >
-      <div class="sc-detail-grid">
-        <span class="sc-detail-key">绑定会话</span>
-        <span class="sc-detail-value" title={props.row.sessionTitle}>
-          <span class="sc-detail-text">{props.row.sessionTitle}</span>
-          <CopyButton text={props.row.sessionTitle} label="会话" />
-          <Show when={canOpenSession()}>
-            <button
-              type="button"
-              class="sc-btn sc-btn-small sc-detail-open"
-              onClick={(event) => {
-                event.stopPropagation()
-                openSession()
-              }}
-              onKeyDown={(event) => event.stopPropagation()}
-            >
-              查看执行会话
-            </button>
-          </Show>
-        </span>
-        <Show when={model}>
-          <span class="sc-detail-key">模型</span>
-          <span class="sc-detail-value sc-mono">
-            <span class="sc-detail-text">{model}</span>
-            <CopyButton text={model} label="模型" />
-          </span>
-        </Show>
-        <Show when={agent}>
-          <span class="sc-detail-key">Agent</span>
-          <span class="sc-detail-value">{agent}</span>
-        </Show>
-        <Show when={directory}>
-          <span class="sc-detail-key">执行目录</span>
-          <span class="sc-detail-value sc-mono">
-            <span class="sc-detail-text">{directory}</span>
-            <CopyButton text={directory} label="目录" />
-          </span>
-        </Show>
-        <span class="sc-detail-key">触发方式</span>
-        <span class="sc-detail-value">{describeWhen(schedule.when)}</span>
-        <span class="sc-detail-key">时区</span>
-        <span class="sc-detail-value">{schedule.tz || "—"}</span>
-        <span class="sc-detail-key">{actionLabel(schedule.action)}</span>
-        <span class="sc-detail-value sc-prompt-text">
-          <span class="sc-detail-text">
-            {schedule.action.type === "prompt" ? schedule.action.prompt : schedule.action.code}
-          </span>
-          <CopyButton
-            text={schedule.action.type === "prompt" ? schedule.action.prompt : schedule.action.code}
-            label={actionLabel(schedule.action)}
-          />
-        </span>
-        <Show when={actionArgs}>
-          <span class="sc-detail-key">代码参数</span>
-          <span class="sc-detail-value sc-prompt-text">
-            <span class="sc-detail-text sc-output-text">{actionArgs}</span>
-          </span>
-        </Show>
-        <Show when={schedule.endsAt !== undefined}>
-          <span class="sc-detail-key">结束时间</span>
-          <span class="sc-detail-value">{clockText(schedule.endsAt)}</span>
-        </Show>
-        <span class="sc-detail-key">已触发</span>
-        <span class="sc-detail-value">{schedule.runCount} 次</span>
-        <Show when={schedule.lastFiredAt !== undefined}>
-          <span class="sc-detail-key">上次触发</span>
-          <span class="sc-detail-value">
-            {clockText(schedule.lastFiredAt)}（{relativeTime(schedule.lastFiredAt, props.now)}）
-            <Show when={outcome}>
-              <span class={`sc-badge sc-badge-${outcome!.tone}`}>{outcome!.text}</span>
-            </Show>
-          </span>
-        </Show>
-        <Show when={schedule.lastOutput?.trim()}>
-          <span class="sc-detail-key">上次输出</span>
-          <span class="sc-detail-value sc-prompt-text">
-            <span class="sc-detail-text sc-output-text">{schedule.lastOutput}</span>
-            <CopyButton text={schedule.lastOutput!} label="输出" />
-          </span>
-        </Show>
-        <span class="sc-detail-key">创建于</span>
-        <span class="sc-detail-value">{clockText(schedule.time.created)}</span>
-        <Show when={schedule.time.updated !== schedule.time.created}>
-          <span class="sc-detail-key">更新于</span>
-          <span class="sc-detail-value">{clockText(schedule.time.updated)}</span>
-        </Show>
+      <div class="sc-detail-cols">
+        <div class="sc-detail-col">
+          <section class="sc-detail-group">
+            <h4 class="sc-detail-group-title">基本信息</h4>
+            <div class="sc-detail-grid">
+              <span class="sc-detail-key">绑定会话</span>
+              <span class="sc-detail-value" title={props.row.sessionTitle}>
+                <span class="sc-detail-text">{props.row.sessionTitle}</span>
+                <CopyButton text={props.row.sessionTitle} label="会话" />
+                <Show when={canOpenSession()}>
+                  <button
+                    type="button"
+                    class="sc-btn sc-btn-small sc-detail-open"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      openSession()
+                    }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  >
+                    查看执行会话
+                  </button>
+                </Show>
+              </span>
+              <Show when={model}>
+                <span class="sc-detail-key">模型</span>
+                <span class="sc-detail-value sc-mono">
+                  <span class="sc-detail-text">{model}</span>
+                  <CopyButton text={model} label="模型" />
+                </span>
+              </Show>
+              <Show when={agent}>
+                <span class="sc-detail-key">Agent</span>
+                <span class="sc-detail-value">{agent}</span>
+              </Show>
+              <Show when={directory}>
+                <span class="sc-detail-key">执行目录</span>
+                <span class="sc-detail-value sc-mono">
+                  <span class="sc-detail-text">{directory}</span>
+                  <CopyButton text={directory} label="目录" />
+                </span>
+              </Show>
+            </div>
+          </section>
+
+          <section class="sc-detail-group">
+            <h4 class="sc-detail-group-title">运行情况</h4>
+            <div class="sc-detail-grid">
+              <span class="sc-detail-key">已触发</span>
+              <span class="sc-detail-value">{schedule.runCount} 次</span>
+              <Show when={schedule.lastFiredAt !== undefined}>
+                <span class="sc-detail-key">上次触发</span>
+                <span class="sc-detail-value">
+                  {clockText(schedule.lastFiredAt)}（{relativeTime(schedule.lastFiredAt, props.now)}）
+                  <Show when={outcome}>
+                    <span class={`sc-badge sc-badge-${outcome!.tone}`}>{outcome!.text}</span>
+                  </Show>
+                </span>
+              </Show>
+              <span class="sc-detail-key">创建于</span>
+              <span class="sc-detail-value">{clockText(schedule.time.created)}</span>
+              <Show when={schedule.time.updated !== schedule.time.created}>
+                <span class="sc-detail-key">更新于</span>
+                <span class="sc-detail-value">{clockText(schedule.time.updated)}</span>
+              </Show>
+            </div>
+          </section>
+        </div>
+
+        <div class="sc-detail-col">
+          <section class="sc-detail-group">
+            <h4 class="sc-detail-group-title">触发与动作</h4>
+            <div class="sc-detail-grid">
+              <span class="sc-detail-key">触发方式</span>
+              <span class="sc-detail-value">{describeWhen(schedule.when)}</span>
+              <span class="sc-detail-key">时区</span>
+              <span class="sc-detail-value">{schedule.tz || "—"}</span>
+              <span class="sc-detail-key">{actionLabel(schedule.action)}</span>
+              <span class="sc-detail-value sc-prompt-text">
+                <span class="sc-detail-text">
+                  {schedule.action.type === "prompt" ? schedule.action.prompt : schedule.action.code}
+                </span>
+                <CopyButton
+                  text={schedule.action.type === "prompt" ? schedule.action.prompt : schedule.action.code}
+                  label={actionLabel(schedule.action)}
+                />
+              </span>
+              <Show when={actionArgs}>
+                <span class="sc-detail-key">代码参数</span>
+                <span class="sc-detail-value sc-prompt-text">
+                  <span class="sc-detail-text sc-output-text">{actionArgs}</span>
+                </span>
+              </Show>
+              <Show when={schedule.endsAt !== undefined}>
+                <span class="sc-detail-key">结束时间</span>
+                <span class="sc-detail-value">{clockText(schedule.endsAt)}</span>
+              </Show>
+              <Show when={schedule.lastOutput?.trim()}>
+                <span class="sc-detail-key">上次输出</span>
+                <span class="sc-detail-value sc-prompt-text">
+                  <span class="sc-detail-text sc-output-text">{schedule.lastOutput}</span>
+                  <CopyButton text={schedule.lastOutput!} label="输出" />
+                </span>
+              </Show>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   )

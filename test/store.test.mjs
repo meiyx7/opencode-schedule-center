@@ -164,6 +164,109 @@ describe("会话安全 / TASK-01", () => {
 })
 
 describe("创建与回滚 / TASK-02", () => {
+  it("绑定已有会话：不新建会话，sessionID 与 to.session 都指向目标", async () => {
+    let payload
+    const { client, calls } = createClient({
+      automation: {
+        create: async (params) => {
+          payload = params
+          return makeSchedule({ id: "t-bound", sessionID: params.sessionID })
+        },
+      },
+    })
+    const store = new ScheduleStore(client)
+    const created = await store.createSchedule(draft({ bindSessionID: "ses_existing" }))
+
+    assert.equal(created.id, "t-bound")
+    assert.equal(hasCall(calls, "session", "create"), false, "绑定模式绝不新建会话")
+    assert.equal(hasCall(calls, "session", "switchModel"), false, "不得改动用户会话模型")
+    assert.equal(hasCall(calls, "session", "switchAgent"), false, "不得改动用户会话 Agent")
+    assert.equal(payload.sessionID, "ses_existing")
+    assert.deepEqual(payload.action.to, { session: "ses_existing" })
+    assert.equal(payload.action.prompt, "do it")
+    assert.equal(store.cachedRows().length, 1)
+  })
+
+  it("绑定已有会话 + 草稿带 model/agent/directory：不落到 payload", async () => {
+    let payload
+    const { client } = createClient({
+      automation: {
+        create: async (params) => {
+          payload = params
+          return makeSchedule({ sessionID: params.sessionID })
+        },
+      },
+    })
+    const store = new ScheduleStore(client)
+    // The form never sends these in bound mode, but the store must not let
+    // them leak into the payload even if a caller supplies them.
+    await store.createSchedule(
+      draft({
+        bindSessionID: "ses_existing",
+        model: { id: "m1", providerID: "p1" },
+        agent: "build",
+        directory: "/some/path",
+      }),
+    )
+    assert.equal(payload.model, undefined)
+    assert.equal(payload.agent, undefined)
+    assert.equal(payload.directory, undefined)
+  })
+
+  it("绑定已有会话失败：认领已写入的任务，绝不删除用户会话", async () => {
+    const rejection = Object.assign(new Error("bound create rejected"), {
+      _tag: "InvalidRequestError",
+      name: "InvalidRequestError",
+    })
+    const { client, calls } = createClient({
+      automation: {
+        create: async () => {
+          throw rejection
+        },
+        list: async ({ sessionID }) => [makeSchedule({ id: "t-adopted-bound", sessionID, prompt: "do it" })],
+      },
+    })
+    const store = new ScheduleStore(client)
+    const created = await store.createSchedule(draft({ bindSessionID: "ses_existing" }))
+
+    assert.equal(created.id, "t-adopted-bound")
+    assert.equal(hasCall(calls, "session", "remove"), false, "绑定模式永不删除用户会话")
+  })
+
+  it("绑定已有会话失败且核对为空：抛原错误，仍不删除用户会话", async () => {
+    const rejection = Object.assign(new Error("bound create rejected"), {
+      _tag: "InvalidRequestError",
+      name: "InvalidRequestError",
+    })
+    const { client, calls } = createClient({
+      automation: {
+        create: async () => {
+          throw rejection
+        },
+        list: async () => [],
+      },
+    })
+    const store = new ScheduleStore(client)
+    await assert.rejects(store.createSchedule(draft({ bindSessionID: "ses_existing" })), (error) => error === rejection)
+    assert.equal(hasCall(calls, "session", "remove"), false)
+  })
+
+  it("绑定不同会话的同草稿不在一起单飞", async () => {
+    const { client, calls } = createClient({
+      automation: {
+        create: async (params) => makeSchedule({ id: `t-${params.sessionID}`, sessionID: params.sessionID }),
+      },
+    })
+    const store = new ScheduleStore(client)
+    const [a, b] = await Promise.all([
+      store.createSchedule(draft({ bindSessionID: "ses_a" })),
+      store.createSchedule(draft({ bindSessionID: "ses_b" })),
+    ])
+    assert.equal(countOf(calls, "automation", "create"), 2)
+    assert.equal(a.id, "t-ses_a")
+    assert.equal(b.id, "t-ses_b")
+  })
+
   it("Session 创建失败：直接抛出，不发起任何会话删除", async () => {
     const { client, calls } = createClient({
       session: {

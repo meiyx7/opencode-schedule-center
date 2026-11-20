@@ -262,6 +262,36 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   flex-shrink: 0;
 }
 
+/* Next-fire countdown gets its own emphasized line: for a scheduled task
+   "how soon" is the one fact worth reading at a glance, so it is promoted out
+   of the muted metadata row and tinted with the accent color. */
+.sc-card-next {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin-top: 1px;
+  color: var(--sc-accent);
+}
+.sc-next-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+.sc-next-rel {
+  font-size: 13px;
+  font-weight: 640;
+  white-space: nowrap;
+}
+.sc-next-at {
+  color: var(--sc-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .sc-card-meta {
   display: flex;
   align-items: center;
@@ -374,18 +404,51 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 
 .sc-detail {
   border-top: 1px dashed var(--sc-border);
-  padding-top: 8px;
+  padding-top: 10px;
   /* The card disables selection for click-to-expand; the detail re-enables it
      so historical values can be selected and copied. */
   user-select: text;
   cursor: default;
 }
 
+/* The expanded card spans the full row, so a single key/value column wasted
+   most of that width. Lay the fields out in grouped columns: essentials and
+   run state on the left, trigger + action (the long prompt) on the right. */
+.sc-detail-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 24px;
+}
+.sc-detail-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.sc-detail-group {
+  min-width: 0;
+}
+.sc-detail-group-title {
+  margin: 0 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--sc-border);
+  color: var(--sc-accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
 .sc-detail-grid {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 14px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 12px;
   font-size: 12px;
+}
+
+/* Narrow cards (single-column list, or a squeezed dialog) stack the groups
+   into one column instead of cramming two key/value sets into half width. */
+@container scroot (max-width: 620px) {
+  .sc-detail-cols { grid-template-columns: minmax(0, 1fr); }
 }
 
 .sc-detail-key {
@@ -578,6 +641,76 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 
 .sc-input.sc-name-input:focus {
   background: var(--sc-card);
+}
+
+/* Session source: the name input plus a single icon-only action to bind an
+   existing session. The icon is the only affordance in this row — no hover
+   wash, no chevron; the pointer cursor is the whole hint. */
+.sc-name-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.sc-name-row .sc-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 38px;
+}
+
+.sc-session-search {
+  position: absolute;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sc-muted);
+  cursor: pointer;
+}
+
+.sc-session-search svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* The link glyph itself marks "bound" — no added background or ring. */
+.sc-session-search.active {
+  color: var(--sc-accent);
+}
+
+.sc-session-source {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: -2px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.sc-session-source-label {
+  color: var(--sc-faint);
+  flex: 0 0 auto;
+}
+
+.sc-session-source-value {
+  color: var(--sc-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.sc-session-picker {
+  margin-top: 6px;
 }
 
 .sc-section {
@@ -1026,6 +1159,30 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 .sc-advanced-wrap {
   display: flex;
   flex-direction: column;
+}
+
+/* Bound mode keeps the whole advanced block in place (no layout jump) but
+   inert: every control is disabled and the block is dimmed. The only new
+   feedback is a short static note — no hover wash, no chevron motion. */
+.sc-advanced-locked {
+  margin: 0 0 2px;
+  color: var(--sc-faint);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Dim the controls, not the explanatory note (the note must stay readable). */
+.sc-advanced-section.sc-advanced-disabled .sc-advanced-toggle,
+.sc-advanced-section.sc-advanced-disabled .sc-advanced {
+  opacity: 0.55;
+}
+
+.sc-advanced-toggle:disabled {
+  cursor: default;
+}
+
+.sc-advanced-toggle:disabled:hover {
+  background: transparent;
 }
 
 .sc-advanced-toggle {

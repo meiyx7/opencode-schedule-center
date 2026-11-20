@@ -238,6 +238,8 @@ const ctx = {
         cursor: {},
       }),
       create: async () => ({ id: "ses_new", title: "定时任务：新任务" }),
+      get: async ({ sessionID }: { sessionID: string }) =>
+        [...demoSessions].find((session) => session.id === sessionID) ?? { id: sessionID, title: sessionID },
       switchModel: async () => undefined,
       remove: async () => undefined,
     },

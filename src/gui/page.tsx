@@ -427,21 +427,23 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                       </button>
                     </div>
                   </div>
+                  <Show when={row.schedule.status === "active" && row.schedule.nextDueAt !== undefined}>
+                    <div class="sc-card-next">
+                      <svg class="sc-next-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+                        <circle cx="8" cy="8.5" r="5.5" />
+                        <path d="M8 5.5v3l2 1.5" />
+                      </svg>
+                      <span class="sc-next-rel">{relativeTime(row.schedule.nextDueAt, now())}</span>
+                      <span class="sc-next-at">{clockText(row.schedule.nextDueAt)}</span>
+                    </div>
+                  </Show>
                   <div class="sc-card-meta">
                     <span class="sc-when">{describeWhen(row.schedule.when)}</span>
-                    <Show
-                      when={row.schedule.status === "active" && row.schedule.nextDueAt !== undefined}
-                      fallback={
-                        <Show when={row.schedule.lastFiredAt !== undefined}>
-                          <span class="sc-sep">·</span>
-                          <span>上次 {clockText(row.schedule.lastFiredAt)}</span>
-                        </Show>
-                      }
-                    >
-                      <span class="sc-sep">·</span>
-                      <span>
-                        下次 {clockText(row.schedule.nextDueAt)}（{relativeTime(row.schedule.nextDueAt, now())}）
-                      </span>
+                    <Show when={row.schedule.status !== "active" || row.schedule.nextDueAt === undefined}>
+                      <Show when={row.schedule.lastFiredAt !== undefined}>
+                        <span class="sc-sep">·</span>
+                        <span>上次 {clockText(row.schedule.lastFiredAt)}</span>
+                      </Show>
                     </Show>
                     <Show when={outcomeLabel(row.schedule.lastOutcome)}>
                       {(outcome) => (
