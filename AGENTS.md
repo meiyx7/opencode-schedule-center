@@ -17,7 +17,7 @@
 |---|---|
 | 仓库 | https://github.com/meiyx7/opencode-schedule-center.git |
 | npm 包名 | `opencode-schedule-center` |
-| 当前版本 | `0.2.0` |
+| 当前版本 | `0.2.1` |
 | 默认分支 | `main` |
 | 入口导出 | `./gui-experimental` → `dist/gui-experimental.cjs` |
 | 源码验证 | `npm run test`、`npm run typecheck` |
