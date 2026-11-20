@@ -129,7 +129,6 @@ export function ScheduleForm(props: {
   const [providerID, setProviderID] = createSignal("")
   const [modelKey, setModelKey] = createSignal("")
   const [variant, setVariant] = createSignal("")
-  const [modelPicker, setModelPicker] = createSignal(false)
   const [modelHint, setModelHint] = createSignal("")
   const [agents, setAgents] = createSignal<Array<{ id: string; name: string; description?: string }>>([])
   // Selected value is the stable agent id (what the session API expects);
@@ -195,25 +194,6 @@ export function ScheduleForm(props: {
   )
   const selectedModel = createMemo(() => currentProvider()?.models.find((model) => model.key === modelKey()))
   const variants = createMemo(() => selectedModel()?.variants ?? [])
-  // 合并后的模型入口：把 Provider / 模型 / 变体拼成一行展示，细节放进浮层里选。
-  const modelTriggerText = () => {
-    const model = selectedModel()
-    if (!model) {
-      return providerID() ? `${currentProvider()?.name ?? providerID()} · 选择模型` : "跟随会话（默认模型）"
-    }
-    const base = `${currentProvider()?.name ?? model.providerID} · ${model.name}`
-    return variant() ? `${base} · ${variant()}` : base
-  }
-
-  let modelField: HTMLDivElement | undefined
-  onMount(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      if (!modelPicker()) return
-      if (modelField && !modelField.contains(event.target as Node)) setModelPicker(false)
-    }
-    document.addEventListener("pointerdown", onPointerDown, true)
-    onCleanup(() => document.removeEventListener("pointerdown", onPointerDown, true))
-  })
 
   function selectProvider(value: string) {
     setProviderID(value)
@@ -402,6 +382,8 @@ export function ScheduleForm(props: {
       // 变体跟着模型显示在摘要里，折叠高级选项时也不会看漏。
       const variantPart = variant() ? ` · ${variant()}` : ""
       parts.push(`${selectedModel()!.name}${variantPart}`)
+    } else if (providerID()) {
+      parts.push(`${currentProvider()?.name ?? providerID()} · 未选模型`)
     }
     if (agent()) parts.push(agentLabel())
     const dir = directory().trim()
@@ -452,10 +434,7 @@ export function ScheduleForm(props: {
         }
         // Escape outside a combobox: close an open advanced panel, else leave the form.
         if (event.key === "Escape" && !event.defaultPrevented) {
-          if (modelPicker()) {
-            event.preventDefault()
-            setModelPicker(false)
-          } else if (advanced()) {
+          if (advanced()) {
             event.preventDefault()
             setAdvanced(false)
           } else {
@@ -533,13 +512,13 @@ export function ScheduleForm(props: {
               </For>
             </div>
 
-            {/* All four modes stay laid out in one grid cell; only the active
-                one is visible. The slot height is therefore the tallest mode at
-                the current width and never changes on tab switches. */}
+            {/* All four modes stay in one grid cell; only the active one is
+                visible. Each mode uses the same three-row structure (field,
+                aside, presets), so the slot height is stable across tabs
+                without reserving a tall blank area. */}
             <div class="sc-trigger-slot">
               <div class="sc-mode" classList={{ "sc-mode-hidden": kind() !== "in" }} aria-hidden={kind() !== "in"}>
-                <div class="sc-mode-desc">一次性执行 · 从创建任务后开始倒计时</div>
-                <div class="sc-field">
+                <div class="sc-field sc-mode-field">
                   <label class="sc-label" for="sc-in">延迟时间</label>
                   <div class="sc-duration-row">
                     <div class="sc-duration">
@@ -555,42 +534,46 @@ export function ScheduleForm(props: {
                       </div>
                     </div>
                   </div>
-                  <div class="sc-presets">
-                    <For each={MINUTE_PRESETS}>
-                      {(preset) => (
-                        <button type="button" class="sc-chip" classList={{ active: inMinutes() === preset.value }} onClick={() => setInMinutes(preset.value)}>
-                          {preset.label}
-                        </button>
-                      )}
-                    </For>
-                  </div>
                 </div>
-                <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidIn() }}>请输入大于 0 的分钟数</p>
+                <div class="sc-mode-aside">
+                  <div class="sc-mode-desc">一次性执行 · 从创建任务后开始倒计时</div>
+                  <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidIn() }}>请输入大于 0 的分钟数</p>
+                </div>
+                <div class="sc-presets">
+                  <For each={MINUTE_PRESETS}>
+                    {(preset) => (
+                      <button type="button" class="sc-chip" classList={{ active: inMinutes() === preset.value }} onClick={() => setInMinutes(preset.value)}>
+                        {preset.label}
+                      </button>
+                    )}
+                  </For>
+                </div>
               </div>
 
               <div class="sc-mode" classList={{ "sc-mode-hidden": kind() !== "at" }} aria-hidden={kind() !== "at"}>
-                <div class="sc-mode-desc">一次性执行 · 在指定日期和时间执行</div>
-                <div class="sc-field">
+                <div class="sc-field sc-mode-field">
                   <label class="sc-label" for="sc-at">执行时间</label>
                   <input
                     id="sc-at" class="sc-input sc-datetime" type="datetime-local"
                     aria-label="触发时间" value={atTime()}
                     onInput={(event) => setAtTime(event.currentTarget.value)}
                   />
-                  <div class="sc-presets">
-                    <For each={AT_PRESETS}>
-                      {(preset) => (
-                        <button type="button" class="sc-chip" onClick={() => setAtTime(preset.at())}>{preset.label}</button>
-                      )}
-                    </For>
-                  </div>
                 </div>
-                <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidAt() }}>请选择晚于当前时间的时间点</p>
+                <div class="sc-mode-aside">
+                  <div class="sc-mode-desc">一次性执行 · 在指定日期和时间执行</div>
+                  <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidAt() }}>请选择晚于当前时间的时间点</p>
+                </div>
+                <div class="sc-presets">
+                  <For each={AT_PRESETS}>
+                    {(preset) => (
+                      <button type="button" class="sc-chip" onClick={() => setAtTime(preset.at())}>{preset.label}</button>
+                    )}
+                  </For>
+                </div>
               </div>
 
               <div class="sc-mode" classList={{ "sc-mode-hidden": kind() !== "every" }} aria-hidden={kind() !== "every"}>
-                <div class="sc-mode-desc">重复执行 · 按固定时间间隔运行</div>
-                <div class="sc-field">
+                <div class="sc-field sc-mode-field">
                   <label class="sc-label" for="sc-every">执行间隔</label>
                   <div class="sc-duration-row">
                     <div class="sc-duration">
@@ -606,40 +589,46 @@ export function ScheduleForm(props: {
                       </div>
                     </div>
                   </div>
-                  <div class="sc-presets">
-                    <For each={MINUTE_PRESETS}>
-                      {(preset) => (
-                        <button type="button" class="sc-chip" classList={{ active: everyMinutes() === preset.value }} onClick={() => setEveryMinutes(preset.value)}>
-                          {preset.label}
-                        </button>
-                      )}
-                    </For>
-                  </div>
                 </div>
-                <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidEvery() }}>请输入大于 0 的分钟数</p>
+                <div class="sc-mode-aside">
+                  <div class="sc-mode-desc">重复执行 · 按固定时间间隔运行</div>
+                  <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidEvery() }}>请输入大于 0 的分钟数</p>
+                </div>
+                <div class="sc-presets">
+                  <For each={MINUTE_PRESETS}>
+                    {(preset) => (
+                      <button type="button" class="sc-chip" classList={{ active: everyMinutes() === preset.value }} onClick={() => setEveryMinutes(preset.value)}>
+                        {preset.label}
+                      </button>
+                    )}
+                  </For>
+                </div>
               </div>
 
               <div class="sc-mode" classList={{ "sc-mode-hidden": kind() !== "cron" }} aria-hidden={kind() !== "cron"}>
-                <div class="sc-mode-desc">重复执行 · 使用 Cron 表达式定义计划</div>
-                <div class="sc-field">
+                <div class="sc-field sc-mode-field">
                   <label class="sc-label" for="sc-cron">Cron 表达式</label>
                   <input
                     id="sc-cron" class="sc-input sc-mono" placeholder="0 9 * * 1-5"
                     aria-label="Cron 表达式" value={cron()}
                     onInput={(event) => setCron(event.currentTarget.value)}
                   />
-                  <div class="sc-cron-examples">示例：<code>0 9 * * 1-5</code> 工作日 09:00</div>
-                  <div class="sc-presets">
-                    <For each={CRON_PRESETS}>
-                      {(preset) => (
-                        <button type="button" class="sc-chip" classList={{ active: cron().trim() === preset.value }} onClick={() => setCron(preset.value)}>
-                          {preset.label}
-                        </button>
-                      )}
-                    </For>
-                  </div>
                 </div>
-                <p class="sc-mode-hint sc-hint sc-hint-warn" classList={{ "sc-hint-off": !invalidCron() }}>本地预览无法解析，仍可提交（以官方校验为准）</p>
+                <div class="sc-mode-aside">
+                  <div class="sc-mode-desc">重复执行 · 使用 Cron 表达式定义计划</div>
+                  <p class="sc-mode-hint sc-hint" classList={{ "sc-hint-warn": invalidCron() }}>
+                    {invalidCron() ? "本地预览无法解析，仍可提交（以官方校验为准）" : "示例：0 9 * * 1-5 · 工作日 09:00"}
+                  </p>
+                </div>
+                <div class="sc-presets">
+                  <For each={CRON_PRESETS}>
+                    {(preset) => (
+                      <button type="button" class="sc-chip" classList={{ active: cron().trim() === preset.value }} onClick={() => setCron(preset.value)}>
+                        {preset.label}
+                      </button>
+                    )}
+                  </For>
+                </div>
               </div>
             </div>
 
@@ -657,58 +646,55 @@ export function ScheduleForm(props: {
                 <span class="sc-label">结束条件</span>
                 <span class="sc-label-note">{isRepeating() ? "可选 · 默认不限" : "一次性任务"}</span>
               </div>
-              {/* One-shot explanation and repeating config share a single grid
-                  cell: switching modes never moves the card bottom, and the
-                  inactive state is only visually hidden so its draft survives. */}
-              <div class="sc-end-body">
-                <div class="sc-end-repeating" classList={{ "sc-end-state-off": !isRepeating() }} aria-hidden={!isRepeating()}>
-                  <div class="sc-end-kinds" role="group" aria-label="结束条件">
-                    <For each={END_KINDS}>
-                      {(option) => (
-                        <button
-                          type="button" class="sc-chip" classList={{ active: endKind() === option.id }}
-                          onClick={() => setEndKind(option.id)}
-                        >
-                          {option.label}
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                  <div class="sc-end-detail-slot">
-                    <div class="sc-end-detail" classList={{ "sc-end-detail-off": endKind() !== "none" }} aria-hidden={endKind() !== "none"}>
-                      <span class="sc-end-placeholder">任务持续运行，不设置结束时间</span>
-                    </div>
-                    <div class="sc-end-detail" classList={{ "sc-end-detail-off": endKind() !== "after" }} aria-hidden={endKind() !== "after"}>
-                      <div class="sc-limit">
-                        <span>运行</span>
-                        <input
-                          id="sc-end-after" class="sc-input" type="text" placeholder="120 分钟 / 2 hours"
-                          title="可填「120」分钟或官方时长如「2 hours」「3 days」"
-                          aria-label="结束前运行时长" value={endAfter()}
-                          onInput={(event) => setEndAfter(event.currentTarget.value)}
-                        />
-                        <span>后结束</span>
-                      </div>
-                      <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidEndAfter() }}>请输入正整数分钟或合法时长</p>
-                    </div>
-                    <div class="sc-end-detail" classList={{ "sc-end-detail-off": endKind() !== "at" }} aria-hidden={endKind() !== "at"}>
-                      <div class="sc-limit">
-                        <span>于</span>
-                        <input
-                          id="sc-end-at" class="sc-input sc-datetime" type="datetime-local"
-                          aria-label="结束时间" value={endAt()}
-                          onInput={(event) => setEndAt(event.currentTarget.value)}
-                        />
-                        <span>结束</span>
-                      </div>
-                      <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidEndAt() }}>请选择有效时间</p>
-                    </div>
-                  </div>
+              <Show
+                when={isRepeating()}
+                fallback={
+                  <p class="sc-onetime-note">
+                    <Icon name="check" /> 一次性任务，执行一次后自动完成，无需设置结束条件
+                  </p>
+                }
+              >
+                <div class="sc-end-kinds" role="group" aria-label="结束条件">
+                  <For each={END_KINDS}>
+                    {(option) => (
+                      <button
+                        type="button" class="sc-chip" classList={{ active: endKind() === option.id }}
+                        onClick={() => setEndKind(option.id)}
+                      >
+                        {option.label}
+                      </button>
+                    )}
+                  </For>
                 </div>
-                <p class="sc-onetime-note" classList={{ "sc-end-state-off": isRepeating() }} aria-hidden={isRepeating()}>
-                  <Icon name="check" /> 一次性任务，执行一次后自动完成，无需设置结束条件
-                </p>
-              </div>
+                <Show when={endKind() === "none"}>
+                  <span class="sc-end-placeholder">任务持续运行，不设置结束时间</span>
+                </Show>
+                <Show when={endKind() === "after"}>
+                  <div class="sc-limit">
+                    <span>运行</span>
+                    <input
+                      id="sc-end-after" class="sc-input" type="text" placeholder="120 分钟 / 2 hours"
+                      title="可填「120」分钟或官方时长如「2 hours」「3 days」"
+                      aria-label="结束前运行时长" value={endAfter()}
+                      onInput={(event) => setEndAfter(event.currentTarget.value)}
+                    />
+                    <span>后结束</span>
+                  </div>
+                  <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidEndAfter() }}>请输入正整数分钟或合法时长</p>
+                </Show>
+                <Show when={endKind() === "at"}>
+                  <div class="sc-limit">
+                    <span>于</span>
+                    <input
+                      id="sc-end-at" class="sc-input sc-datetime" type="datetime-local"
+                      aria-label="结束时间" value={endAt()}
+                      onInput={(event) => setEndAt(event.currentTarget.value)}
+                    />
+                    <span>结束</span>
+                  </div>
+                  <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidEndAt() }}>请选择有效时间</p>
+                </Show>
+              </Show>
             </div>
           </section>
         </div>
@@ -735,111 +721,62 @@ export function ScheduleForm(props: {
 
           <Show when={advanced()}>
             <div class="sc-advanced">
-              <div class="sc-grid" classList={{ "sc-no-agent": agents().length === 0 }}>
-                <div class="sc-field sc-model-field" ref={modelField}>
+              <div class="sc-model-grid">
+                <div class="sc-field">
                   <div class="sc-label-row">
-                    <label class="sc-label" for="sc-model-trigger">
-                      模型
-                    </label>
-                    <span class="sc-label-note">Provider · 模型 · 变体</span>
+                    <label class="sc-label" for="sc-provider">Provider</label>
+                    <span class="sc-label-note">{providerID() ? "已指定" : "跟随会话"}</span>
                   </div>
-                  <button
-                    id="sc-model-trigger"
-                    type="button"
-                    class="sc-input sc-model-trigger"
-                    aria-haspopup="dialog"
-                    aria-expanded={modelPicker()}
-                    title={modelTriggerText()}
-                    onClick={() => setModelPicker(!modelPicker())}
-                  >
-                    <span class="sc-model-trigger-text">{modelTriggerText()}</span>
-                    <span class="sc-model-trigger-chevron" classList={{ open: modelPicker() }}>
-                      <Icon name="chevron" />
-                    </span>
-                  </button>
-                  <Show when={modelPicker()}>
-                    <div class="sc-model-popover" role="dialog" aria-label="选择模型">
-                      <div class="sc-field">
-                        <label class="sc-label" for="sc-provider">
-                          Provider
-                        </label>
-                        <Combobox
-                          id="sc-provider"
-                          value={providerID()}
-                          options={providerOptions()}
-                          placeholder="选择或搜索"
-                          emptyText="没有匹配的 Provider"
-                          onSelect={selectProvider}
-                        />
-                      </div>
-                      <div class="sc-field">
-                        <div class="sc-label-row">
-                          <label class="sc-label" for="sc-model">
-                            模型
-                          </label>
-                          <span class="sc-label-note sc-model-summary">
-                            {selectedModel() ? `${selectedModel()!.providerID} / ${selectedModel()!.id}` : providerID() ? "可搜索" : "先选 Provider"}
-                          </span>
-                        </div>
-                        <Combobox
-                          id="sc-model"
-                          value={modelKey()}
-                          options={modelOptions()}
-                          disabled={!providerID()}
-                          placeholder={providerID() ? "搜索模型" : "请先选择 Provider"}
-                          emptyText="没有匹配的模型"
-                          onSelect={selectModel}
-                        />
-                      </div>
-                      <Show
-                        when={variants().length > 0}
-                        fallback={
-                          <Show when={providerID() && selectedModel()}>
-                            <div class="sc-field">
-                              <span class="sc-label">变体</span>
-                              <p class="sc-hint">该模型没有变体，直接使用默认行为</p>
-                            </div>
-                          </Show>
-                        }
-                      >
-                        <div class="sc-field">
-                          <span class="sc-label">变体</span>
-                          <div class="sc-variant-chips" role="group" aria-label="模型变体">
-                            <button
-                              type="button"
-                              class="sc-chip"
-                              classList={{ active: variant() === "" }}
-                              onClick={() => setVariant("")}
-                            >
-                              默认
-                            </button>
-                            <For each={variants()}>
-                              {(id) => (
-                                <button
-                                  type="button"
-                                  class="sc-chip"
-                                  classList={{ active: variant() === id }}
-                                  onClick={() => setVariant(id)}
-                                >
-                                  {id}
-                                </button>
-                              )}
-                            </For>
-                          </div>
-                        </div>
-                      </Show>
-                    </div>
-                  </Show>
-                  <Show when={modelHint()}>
-                    <p class="sc-hint sc-hint-bad">{modelHint()}</p>
-                  </Show>
+                  <Combobox
+                    id="sc-provider"
+                    value={providerID()}
+                    options={providerOptions()}
+                    placeholder="选择或搜索"
+                    emptyText="没有匹配的 Provider"
+                    onSelect={selectProvider}
+                  />
                 </div>
+                <div class="sc-field">
+                  <div class="sc-label-row">
+                    <label class="sc-label" for="sc-model">模型</label>
+                    <span class="sc-label-note sc-model-note">
+                      {selectedModel() ? `${selectedModel()!.providerID} / ${selectedModel()!.id}` : providerID() ? "请选择模型" : "先选 Provider"}
+                    </span>
+                  </div>
+                  <Combobox
+                    id="sc-model"
+                    value={modelKey()}
+                    options={modelOptions()}
+                    disabled={!providerID()}
+                    placeholder={providerID() ? "搜索模型" : "请先选择 Provider"}
+                    emptyText="没有匹配的模型"
+                    onSelect={selectModel}
+                  />
+                </div>
+                <div class="sc-field">
+                  <div class="sc-label-row">
+                    <label class="sc-label" for="sc-variant">变体</label>
+                    <span class="sc-label-note">
+                      {!selectedModel() ? "先选模型" : variants().length === 0 ? "无变体" : "可选"}
+                    </span>
+                  </div>
+                  <select
+                    id="sc-variant"
+                    class="sc-input"
+                    value={variant()}
+                    disabled={!selectedModel() || variants().length === 0}
+                    onChange={(event) => setVariant(event.currentTarget.value)}
+                  >
+                    <option value="">默认</option>
+                    <For each={variants()}>{(id) => <option value={id}>{id}</option>}</For>
+                  </select>
+                </div>
+              </div>
 
+              <div class="sc-advanced-bottom" classList={{ "sc-no-agent": agents().length === 0 }}>
                 <Show when={agents().length > 0}>
-                  <div class="sc-field sc-agent-field">
-                    <label class="sc-label" for="sc-agent">
-                      Agent
-                    </label>
+                  <div class="sc-field">
+                    <label class="sc-label" for="sc-agent">Agent</label>
                     <select
                       id="sc-agent"
                       class="sc-input"
@@ -854,11 +791,9 @@ export function ScheduleForm(props: {
                   </div>
                 </Show>
 
-                <div class="sc-field sc-directory-field">
+                <div class="sc-field">
                   <div class="sc-label-row">
-                    <label class="sc-label" for="sc-directory">
-                      执行目录
-                    </label>
+                    <label class="sc-label" for="sc-directory">执行目录</label>
                     <button
                       type="button"
                       class="sc-link-button"
@@ -897,11 +832,11 @@ export function ScheduleForm(props: {
                     />
                   </Show>
                 </div>
-                </div>
-                <Show when={modelHint()}>
-                  <p class="sc-hint sc-hint-bad">{modelHint()}</p>
-                </Show>
               </div>
+              <Show when={modelHint()}>
+                <p class="sc-hint sc-hint-bad">{modelHint()}</p>
+              </Show>
+            </div>
 
           </Show>
           </div>

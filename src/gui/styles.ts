@@ -124,13 +124,25 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
    container (same technique as plugin-hub / usage-center) so the task list
    and the two-column form get room to breathe. resize: both lets users
    tune it per screen. */
+/* The host anchors x-large dialogs to the top and offsets them with
+   margin-top: calc((100vh - var(--dialog-height)) / 2), where --dialog-height
+   is the host's 680px cap. We render an 840px panel, so that margin would push
+   the dialog down and clip its bottom. Center the overlay instead and drop the
+   stale offset; the panel keeps a viewport-safe max-height and stays centered
+   even after the user resizes it. */
+[data-component="dialog-v2"][data-size="x-large"]:has(.sc-root[data-embedded="true"]) {
+  align-items: center;
+}
+
 [data-component="dialog-v2"][data-size="x-large"]:has(.sc-root[data-embedded="true"]) [data-slot="dialog-container"] {
+  --dialog-height: min(calc(100vh - 80px), 840px);
   width: min(100vw - 48px, 1200px);
-  height: min(100vh - 80px, 840px);
+  height: var(--dialog-height);
   min-width: min(100vw - 48px, 760px);
-  min-height: min(100vh - 80px, 520px);
+  min-height: min(calc(100vh - 80px), 520px);
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 24px);
+  margin-top: 0;
   resize: both;
 }
 
@@ -657,21 +669,26 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 0 0 0.5px color-mix(in srgb, var(--sc-border) 60%, transparent);
 }
 
-/* Fixed-slot design without clipping: all four modes stay laid out in one
-   grid cell, only the active one is visible. The slot's height therefore
-   equals the tallest mode at the current container width — so switching tabs
-   never moves the bottom edge, Cron presets may wrap as the column narrows,
-   and nothing can spill over the 预计触发 row. No overflow:hidden anywhere. */
+/* Every trigger mode keeps the same compact structure: the control on the
+   left, its description + validation hint on the right, and the quick presets
+   across the bottom. All four modes stay in one grid cell (only the active one
+   is visible), so the slot is exactly as tall as this shared structure and
+   tab switches never move the 预计触发 row. */
 .sc-trigger-slot {
   display: grid;
-  min-height: 150px;
+  container-type: inline-size;
+  container-name: sctrigger;
 }
 
 .sc-mode {
   grid-area: 1 / 1;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  grid-template-areas:
+    "field aside"
+    "presets presets";
+  column-gap: 16px;
+  row-gap: 8px;
   width: 100%;
   min-width: 0;
 }
@@ -681,9 +698,27 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   pointer-events: none;
 }
 
+.sc-mode-field {
+  grid-area: field;
+}
+
+.sc-mode-aside {
+  grid-area: aside;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 1px;
+}
+
 .sc-mode-desc {
   color: var(--sc-faint);
   font-size: 11px;
+  line-height: 16px;
+}
+
+.sc-mode .sc-presets {
+  grid-area: presets;
 }
 
 /* Validation messages reserve their line up front so showing/hiding an error
@@ -696,6 +731,22 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 
 .sc-mode-hint.sc-hint-off {
   visibility: hidden;
+}
+
+/* Narrow columns stack the control above its description instead of squeezing
+   both into half the panel. */
+@container sctrigger (max-width: 430px) {
+  .sc-mode {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "aside"
+      "field"
+      "presets";
+  }
+
+  .sc-mode-aside {
+    padding-top: 0;
+  }
 }
 
 .sc-control {
@@ -713,18 +764,6 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 
 .sc-duration-row {
   display: flex;
-}
-
-.sc-cron-examples {
-  color: var(--sc-faint);
-  font-size: 11px;
-}
-.sc-cron-examples code {
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: var(--sc-layer-2, color-mix(in srgb, var(--sc-muted) 8%, transparent));
-  color: var(--sc-muted);
-  font-size: 11px;
 }
 
 .sc-duration {
@@ -867,11 +906,10 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   margin: 0;
 }
 
-/* End condition: the one-shot explanation and the repeating config stack in
-   one grid cell, so switching 延迟/定时 ↔ 间隔/Cron never moves the card bottom.
-   The three detail variants (none/after/at) also stack in a single cell sized
-   to the tallest one at the current width — no fixed height, no overflow:hidden,
-   so controls and error hints are never clipped while the slot stays stable. */
+/* End condition: only the active state is rendered (不限 / 时长 / 指定时间),
+   so there is no hidden detail slot reserving space. The two form columns share
+   one height and the prompt textarea absorbs changes, keeping both card edges
+   aligned without artificial blank areas. */
 .sc-end {
   display: flex;
   flex-direction: column;
@@ -881,19 +919,6 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   border-top: 1px solid var(--sc-border);
 }
 .sc-end-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
-.sc-end-body { display: grid; }
-.sc-end-body > * { grid-area: 1 / 1; }
-.sc-end-repeating {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.sc-end-repeating.sc-end-state-off,
-.sc-onetime-note.sc-end-state-off {
-  visibility: hidden;
-  pointer-events: none;
-}
 .sc-end-kinds { display: flex; flex-wrap: wrap; gap: 4px; }
 .sc-end .sc-limit {
   margin-top: 0;
@@ -903,34 +928,17 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
 }
 .sc-end .sc-limit .sc-input { width: 110px; text-align: left; }
 .sc-end .sc-datetime { flex: 0 1 190px; height: 30px; }
-
-.sc-end-detail-slot { display: grid; }
-.sc-end-detail-slot > .sc-end-detail { grid-area: 1 / 1; }
-.sc-end-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  width: 100%;
-}
-.sc-end-detail.sc-end-detail-off {
-  visibility: hidden;
-  pointer-events: none;
-}
-.sc-end-detail .sc-mode-hint { font-size: 10px; }
+.sc-end .sc-mode-hint { font-size: 10px; }
 .sc-end-placeholder {
-  padding-top: 8px;
   color: var(--sc-faint);
   font-size: 11px;
 }
 
-/* One-shot explanation occupies the same grid cell as the repeating config. */
 .sc-onetime-note {
   display: flex;
   align-items: flex-start;
   gap: 6px;
   margin: 0;
-  padding-top: 12px;
   color: var(--sc-muted);
   font-size: 11.5px;
   line-height: 1.5;
@@ -1121,105 +1129,35 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   }
 }
 
-/* Advanced fields: one merged model picker across the top row, agent and
-   directory below, so the panel stays short enough for the dialog. */
-.sc-grid {
+/* Advanced fields: Provider / 模型 / 变体 are independent inline pickers on
+   one row, with Agent and 执行目录 below. The panel spans both form columns,
+   so there is enough width for the three-level model choice without a popover. */
+.sc-model-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-  grid-template-areas:
-    "model model"
-    "agent directory";
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.8fr) minmax(0, 0.85fr);
   gap: 8px 10px;
   align-items: end;
 }
 
-.sc-model-field { grid-area: model; }
-.sc-agent-field { grid-area: agent; }
-.sc-directory-field { grid-area: directory; }
-
-.sc-grid.sc-no-agent {
-  grid-template-areas:
-    "model model"
-    "directory directory";
+.sc-advanced-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 8px 10px;
+  align-items: end;
+  margin-top: 10px;
 }
 
-/* Very narrow panels stack rather than squeezing the row. */
-@container scadv (max-width: 360px) {
-  .sc-grid,
-  .sc-grid.sc-no-agent {
+.sc-advanced-bottom.sc-no-agent {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Narrow panels stack rather than squeezing the three model fields. */
+@container scadv (max-width: 560px) {
+  .sc-model-grid,
+  .sc-advanced-bottom,
+  .sc-advanced-bottom.sc-no-agent {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: none;
   }
-
-  .sc-grid > .sc-field {
-    grid-area: auto;
-  }
-}
-
-/* One trigger showing Provider · 模型 · 变体; the pickers live in a popover so
-   the row stays a single compact line. */
-.sc-model-field {
-  position: relative;
-}
-
-.sc-model-trigger {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  justify-content: space-between;
-  text-align: left;
-  cursor: pointer;
-}
-
-.sc-model-trigger:hover {
-  border-color: color-mix(in srgb, var(--sc-accent) 45%, var(--sc-border));
-}
-
-.sc-model-trigger[aria-expanded="true"] {
-  border-color: color-mix(in srgb, var(--sc-accent) 55%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sc-accent) 14%, transparent);
-}
-
-.sc-model-trigger-text {
-  overflow: hidden;
-  min-width: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sc-model-trigger-chevron {
-  display: inline-flex;
-  flex: 0 0 auto;
-  color: var(--sc-muted);
-  transform: rotate(90deg);
-  transition: transform 0.15s ease;
-}
-
-.sc-model-trigger-chevron.open {
-  transform: rotate(270deg);
-}
-
-.sc-model-popover {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 6px);
-  left: 0;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--sc-border);
-  border-radius: 10px;
-  background: var(--sc-layer, var(--sc-card));
-  box-shadow: 0 12px 32px color-mix(in srgb, #000 22%, transparent);
-  animation: sc-panel-in 0.15s ease;
-}
-
-.sc-variant-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .sc-link-button {
@@ -1237,9 +1175,9 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   text-decoration: underline;
 }
 
-.sc-model-summary {
+.sc-model-note {
   overflow: hidden;
-  max-width: 68%;
+  max-width: 62%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   text-overflow: ellipsis;
