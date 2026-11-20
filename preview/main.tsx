@@ -101,39 +101,58 @@ function MockDialog(props: { title?: string; children?: unknown }) {
   )
 }
 
+function toAutomation(row: ScheduleRow) {
+  const { when, endsAt, lastFiredAt, ...rest } = row.schedule
+  return {
+    ...rest,
+    trigger: when.type === "in" ? { type: "at", at: `in ${when.in}` } : when,
+    expires: endsAt,
+    lastRunAt: lastFiredAt,
+  }
+}
+
 const ctx = {
   ui: { Dialog: MockDialog },
   client: {
     experimental: {
-      schedule: {
-        // The store queries per session; return that session's rows only.
-        list: async (input: { sessionID: string }) =>
-          rows.filter((row) => row.schedule.sessionID === input.sessionID).map((row) => row.schedule),
-        create: async (input: { sessionID: string; prompt: string; name?: string }) => {
+      automation: {
+        list: async (input?: { sessionID?: string }) => {
+          const source = input?.sessionID
+            ? rows.filter((row) => row.schedule.sessionID === input.sessionID)
+            : rows
+          return source.map(toAutomation)
+        },
+        get: async (input: { automationID: string }) => {
+          const row = rows.find((row) => row.schedule.id === input.automationID)
+          if (!row) throw Object.assign(new Error("not found"), { _tag: "AutomationNotFoundError" })
+          return toAutomation(row)
+        },
+        create: async (input: any) => {
           const schedule: ScheduleRow["schedule"] = {
             id: "sch_created_" + Math.random().toString(36).slice(2, 8),
             sessionID: input.sessionID,
             name: input.name,
-            when: { type: "in", in: "30 minutes", tz: "Asia/Shanghai" },
+            when: input.trigger,
             tz: "Asia/Shanghai",
-            action: { type: "prompt", prompt: input.prompt },
+            action: input.action,
             status: "active",
             runCount: 0,
             time: { created: Date.now(), updated: Date.now() },
             nextDueAt: Date.now() + 30 * 60_000,
           }
-          rows.push({ sessionTitle: input.name ?? "定时任务", schedule })
-          return schedule
+          const row = { sessionTitle: input.name ?? "定时任务", schedule }
+          rows.push(row)
+          return toAutomation(row)
         },
-        pause: async (input: { scheduleID: string }) => {
-          const row = rows.find((row) => row.schedule.id === input.scheduleID)
+        pause: async (input: { automationID: string }) => {
+          const row = rows.find((row) => row.schedule.id === input.automationID)
           if (row) row.schedule.status = "paused"
-          return rows.find((row) => row.schedule.id === input.scheduleID)!.schedule
+          return toAutomation(rows.find((row) => row.schedule.id === input.automationID)!)
         },
-        resume: async (input: { scheduleID: string }) => {
-          const row = rows.find((row) => row.schedule.id === input.scheduleID)
+        resume: async (input: { automationID: string }) => {
+          const row = rows.find((row) => row.schedule.id === input.automationID)
           if (row) row.schedule.status = "active"
-          return rows.find((row) => row.schedule.id === input.scheduleID)!.schedule
+          return toAutomation(rows.find((row) => row.schedule.id === input.automationID)!)
         },
         delete: async () => undefined,
       },
@@ -219,6 +238,8 @@ const ctx = {
         cursor: {},
       }),
       create: async () => ({ id: "ses_new", title: "定时任务：新任务" }),
+      get: async ({ sessionID }: { sessionID: string }) =>
+        [...demoSessions].find((session) => session.id === sessionID) ?? { id: sessionID, title: sessionID },
       switchModel: async () => undefined,
       remove: async () => undefined,
     },

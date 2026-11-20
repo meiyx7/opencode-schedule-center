@@ -23,6 +23,8 @@ export function Combobox(props: {
   placeholder?: string
   emptyText?: string
   disabled?: boolean
+  /** Open the list as soon as the combobox mounts (used by popover pickers). */
+  autoOpen?: boolean
   onSelect: (value: string) => void
 }) {
   const [open, setOpen] = createSignal(false)
@@ -59,6 +61,11 @@ export function Combobox(props: {
     }
     document.addEventListener("pointerdown", onPointerDown, true)
     onCleanup(() => document.removeEventListener("pointerdown", onPointerDown, true))
+    if (props.autoOpen) {
+      openList()
+      input?.focus()
+      selectAllText()
+    }
   })
 
   function openList() {

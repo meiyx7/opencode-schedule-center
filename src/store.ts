@@ -247,6 +247,11 @@ export class ScheduleStore {
   }
 
   private async createOnce(draft: CreateDraft): Promise<ScheduleInfo> {
+    // Bind mode: deliver the prompt to a session the user already owns. No
+    // mount session, no model/agent/directory switches — those would mutate
+    // a session that is not ours to reconfigure.
+    if (draft.bindSessionID) return this.createBoundOnce(draft)
+
     const session = await this.client.session.create({
       title: draft.name ? `定时任务：${draft.name}` : "定时任务",
       ...(draft.model ? { model: draft.model } : {}),
@@ -310,6 +315,64 @@ export class ScheduleStore {
     }
     this.commitCreated(confirmedSession, response)
     return response
+  }
+
+  /**
+   * Bind to an existing session chosen by the user. No session.create and no
+   * model/agent/directory switches — the target belongs to the user, and
+   * reconfiguring it (or rolling it back by deleting it) would be destructive.
+   * The chosen session is both the creator (`sessionID`) and the prompt target
+   * (`action.to.session`), so its metadata drives the card display as usual.
+   */
+  private async createBoundOnce(draft: CreateDraft): Promise<ScheduleInfo> {
+    const sessionID = draft.bindSessionID!
+    // Read the session for display metadata, but never block creation on it:
+    // the caller just picked this session from a live list, and a read-back
+    // failure must not turn into a false negative. A minimal fallback lets the
+    // card render until the next sweep enriches the title/model/agent.
+    let session: SessionInfo = { id: sessionID }
+    try {
+      session = await this.client.session.get({ sessionID })
+    } catch {
+      // keep the fallback; metadata enrichment is best-effort everywhere else
+    }
+
+    // Defense in depth: the UI never sends these in bound mode, but a direct
+    // caller must not be able to smuggle session-level settings into a task
+    // that is supposed to reuse the target session as-is.
+    const { model: _m, agent: _a, directory: _d, ...clean } = draft
+    let response: ScheduleInfo
+    try {
+      // buildCreateInput sets both sessionID and action.to.session to this id.
+      const created = await this.client.experimental.automation.create(buildCreateInput(sessionID, clean))
+      response = fromAutomation(created)
+    } catch (error) {
+      return this.reconcileBoundCreate(session, draft, error)
+    }
+    this.commitCreated(session, response)
+    return response
+  }
+
+  /**
+   * Bound-mode create failure: verify whether a lost response hid a successful
+   * write, but NEVER delete the target session — it is the user's, not a mount
+   * session we created. If nothing was written, surface the original error
+   * unchanged (the caller keeps its session and its draft).
+   */
+  private async reconcileBoundCreate(session: SessionInfo, draft: CreateDraft, error: unknown): Promise<ScheduleInfo> {
+    let existing: ScheduleInfo[] | undefined
+    try {
+      existing = (await this.client.experimental.automation.list({ sessionID: session.id })).map(fromAutomation)
+    } catch {
+      existing = undefined
+    }
+    if (existing && existing.length > 0) {
+      const created =
+        existing.find((item) => item.action.type === "prompt" && item.action.prompt === draft.prompt) ?? existing[0]
+      this.commitCreated(session, created)
+      return created
+    }
+    throw error
   }
 
   /**
@@ -507,6 +570,7 @@ function buildCreateInput(ownerSessionID: string, draft: CreateDraft): Experimen
 /** Stable identity for duplicate-submit detection; different drafts stay distinct. */
 function draftKey(draft: CreateDraft): string {
   return JSON.stringify({
+    bindSessionID: draft.bindSessionID ?? "",
     name: draft.name,
     prompt: draft.prompt,
     when: draft.when,

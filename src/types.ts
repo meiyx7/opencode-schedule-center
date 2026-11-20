@@ -82,6 +82,12 @@ export type EndDraft = { after?: string; at?: string }
 
 export interface CreateDraft {
   sessionID: string
+  /**
+   * Bind the prompt to an EXISTING session instead of creating a dedicated
+   * mount session. When set, createOnce skips session.create and the
+   * model/agent/directory switches — those would mutate the user's session.
+   */
+  bindSessionID?: string
   name?: string
   when: WhenDraft
   prompt: string
