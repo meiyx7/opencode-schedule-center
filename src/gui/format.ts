@@ -141,15 +141,27 @@ export function clockText(at: number | undefined): string {
 }
 
 /**
- * Outcome badge text and tone — one entry per official ScheduleOutcome value.
- * `checked` means "condition was checked", NOT "condition unmet"; the latter is
- * `skipped`. Keeping them distinct avoids asserting a failure the API didn't report.
+ * Validate a `datetime-local` end time against the current time and, when the
+ * first trigger is known, the first predicted run. Returns a user-facing hint
+ * or null when the value is acceptable.
+ */
+export function validateEndAt(value: string, now: number, firstTrigger?: number): string | null {
+  const at = Date.parse(value)
+  if (Number.isNaN(at)) return "请选择有效时间"
+  if (at <= now) return "结束时间已过去"
+  if (firstTrigger !== undefined && at <= firstTrigger) return "结束时间需晚于首次触发时间"
+  return null
+}
+
+/**
+ * Outcome badge text and tone — one entry per official AutomationOutcome value.
+ * The legacy `checked` outcome belonged to the removed Schedule API and is no
+ * longer part of the official union.
  */
 export function outcomeLabel(outcome: string | undefined): { text: string; tone: "ok" | "warn" | "bad" } | null {
   if (!outcome) return null
   if (outcome === "fired") return { text: "已触发", tone: "ok" }
   if (outcome === "late") return { text: "延迟触发", tone: "warn" }
-  if (outcome === "checked") return { text: "已检查条件", tone: "warn" }
   if (outcome === "expired") return { text: "已过期", tone: "warn" }
   if (outcome === "skipped") return { text: "已跳过", tone: "warn" }
   if (outcome === "disabled") return { text: "已禁用", tone: "warn" }

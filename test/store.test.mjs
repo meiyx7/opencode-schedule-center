@@ -187,6 +187,24 @@ describe("创建与回滚 / TASK-02", () => {
     assert.equal(store.cachedRows().length, 1)
   })
 
+  it("新建承载会话写入归属标记，便于删除任务时识别", async () => {
+    let sessionPayload
+    const { client } = createClient({
+      session: {
+        create: async (params) => {
+          sessionPayload = params
+          return makeSession({ id: "new-session", title: params.title, metadata: params.metadata })
+        },
+      },
+      automation: {
+        create: async (params) => makeSchedule({ id: "t-mount", sessionID: params.sessionID }),
+      },
+    })
+    await new ScheduleStore(client).createSchedule(draft({ name: "巡检" }))
+    assert.equal(sessionPayload.title, "定时任务：巡检")
+    assert.equal(sessionPayload.metadata["opencode-schedule-center.mount"], true)
+  })
+
   it("绑定已有会话 + 草稿带 model/agent/directory：不落到 payload", async () => {
     let payload
     const { client } = createClient({
@@ -213,24 +231,140 @@ describe("创建与回滚 / TASK-02", () => {
     assert.equal(payload.directory, undefined)
   })
 
-  it("绑定已有会话失败：认领已写入的任务，绝不删除用户会话", async () => {
+  it("绑定已有会话失败：创建前已存在的任务绝不被认领", async () => {
     const rejection = Object.assign(new Error("bound create rejected"), {
       _tag: "InvalidRequestError",
       name: "InvalidRequestError",
+    })
+    const preexisting = makeSchedule({
+      id: "t-old",
+      sessionID: "ses_existing",
+      action: { type: "prompt", prompt: "旧任务", to: { session: "ses_existing" } },
     })
     const { client, calls } = createClient({
       automation: {
         create: async () => {
           throw rejection
         },
-        list: async ({ sessionID }) => [makeSchedule({ id: "t-adopted-bound", sessionID, prompt: "do it" })],
+        list: async () => [preexisting],
+      },
+    })
+    const store = new ScheduleStore(client)
+    await assert.rejects(
+      store.createSchedule(draft({ bindSessionID: "ses_existing" })),
+      (error) => error === rejection,
+      "创建前已有的任务不能被当作本次创建结果",
+    )
+
+    assert.equal(hasCall(calls, "session", "remove"), false, "绑定模式永不删除用户会话")
+    assert.equal(store.cachedRows().length, 0, "失败后不得把旧任务写进缓存")
+  })
+
+  it("绑定已有会话失败：只认领创建后新增且提示词匹配的任务", async () => {
+    let listCalls = 0
+    const timeout = new Error("timeout")
+    timeout.name = "TimeoutError"
+    const { client } = createClient({
+      automation: {
+        create: async () => {
+          throw timeout
+        },
+        list: async ({ sessionID }) => {
+          listCalls += 1
+          const old = makeSchedule({
+            id: "t-old",
+            sessionID,
+            action: { type: "prompt", prompt: "旧任务", to: { session: sessionID } },
+          })
+          if (listCalls === 1) return [old]
+          return [old, makeSchedule({ id: "t-new", sessionID, prompt: "do it" })]
+        },
       },
     })
     const store = new ScheduleStore(client)
     const created = await store.createSchedule(draft({ bindSessionID: "ses_existing" }))
 
-    assert.equal(created.id, "t-adopted-bound")
-    assert.equal(hasCall(calls, "session", "remove"), false, "绑定模式永不删除用户会话")
+    assert.equal(created.id, "t-new")
+    assert.equal(created.action.prompt, "do it")
+    assert.equal(store.cachedRows().length, 1)
+  })
+
+  it("绑定已有会话失败：新增任务提示词不匹配也不认领", async () => {
+    const rejection = Object.assign(new Error("bound create rejected"), {
+      _tag: "InvalidRequestError",
+      name: "InvalidRequestError",
+    })
+    let listCalls = 0
+    const { client } = createClient({
+      automation: {
+        create: async () => {
+          throw rejection
+        },
+        list: async ({ sessionID }) => {
+          listCalls += 1
+          return listCalls === 1
+            ? []
+            : [
+                makeSchedule({
+                  id: "t-other",
+                  sessionID,
+                  action: { type: "prompt", prompt: "完全不同的任务", to: { session: sessionID } },
+                }),
+              ]
+        },
+      },
+    })
+    const store = new ScheduleStore(client)
+    await assert.rejects(
+      store.createSchedule(draft({ bindSessionID: "ses_existing" })),
+      (error) => error === rejection,
+    )
+    assert.equal(store.cachedRows().length, 0)
+  })
+
+  it("绑定已有会话失败且无法取得创建前基线：不认领，提示刷新确认", async () => {
+    const timeout = new Error("timeout")
+    timeout.name = "TimeoutError"
+    const { client, calls } = createClient({
+      automation: {
+        create: async () => {
+          throw timeout
+        },
+        list: async () => {
+          throw new Error("list unavailable")
+        },
+      },
+    })
+    const store = new ScheduleStore(client)
+    await assert.rejects(
+      store.createSchedule(draft({ bindSessionID: "ses_existing" })),
+      (error) => error.message.includes("无法确认") && error.message.includes("刷新任务列表"),
+    )
+    assert.equal(hasCall(calls, "session", "remove"), false)
+  })
+
+  it("绑定已有会话被明确拒绝且基线读取失败：直接抛原错误，不误报无法确认", async () => {
+    const rejection = Object.assign(new Error("invalid cron"), {
+      _tag: "InvalidRequestError",
+      name: "InvalidRequestError",
+    })
+    const { client } = createClient({
+      automation: {
+        create: async () => {
+          throw rejection
+        },
+        list: async () => {
+          throw new Error("list unavailable")
+        },
+      },
+    })
+    const store = new ScheduleStore(client)
+    await assert.rejects(
+      store.createSchedule(draft({ bindSessionID: "ses_existing" })),
+      (error) => error === rejection,
+      "明确业务拒绝已证明没有写入，无需基线核对",
+    )
+    assert.equal(store.cachedRows().length, 0)
   })
 
   it("绑定已有会话失败且核对为空：抛原错误，仍不删除用户会话", async () => {
@@ -1566,5 +1700,154 @@ describe("批次8 / TASK-11~13：model 与 Agent 创建确认", () => {
     assert.equal(row.session.agent, "build", "agent 必须来自回读")
     assert.equal(row.session.location?.directory, "/work/proj", "回读合并不得丢失目录元数据")
     assert.equal(countOf(calls, "session", "get"), 2, "model 与 agent 各自回读一次")
+  })
+})
+
+describe("0.2.2：绑定会话搜索分页", () => {
+  it("把 search 与 cursor 原样传给官方 session.list", async () => {
+    const seen = []
+    const { client } = createClient({
+      session: {
+        list: async (input) => {
+          seen.push(input)
+          return { data: [makeSession({ id: "s2" })], cursor: { next: "c2" } }
+        },
+      },
+    })
+    const page = await new ScheduleStore(client).sessionsPage({ search: "  巡检  ", cursor: "c1", limit: 25 })
+    assert.deepEqual(seen, [{ limit: 25, search: "巡检", cursor: "c1" }])
+    assert.equal(page.sessions[0].id, "s2")
+    assert.equal(page.next, "c2")
+  })
+
+  it("空搜索词不发送 search，无 next 游标时 next 为 undefined", async () => {
+    let input
+    const { client } = createClient({
+      session: {
+        list: async (params) => {
+          input = params
+          return { data: [], cursor: {} }
+        },
+      },
+    })
+    const page = await new ScheduleStore(client).sessionsPage({ search: "   " })
+    assert.equal(input.search, undefined)
+    assert.equal(input.limit, 50)
+    assert.equal(page.next, undefined)
+  })
+})
+
+describe("0.2.2：删除任务时可选清理承载会话", () => {
+  const MOUNT = "opencode-schedule-center.mount"
+
+  async function primed({ sessions, schedules }) {
+    return seededStore({ sessions, schedules })
+  }
+
+  it("带元数据标记的承载会话可随任务删除", async () => {
+    const sessions = [makeSession({ id: "m1", title: "定时任务：巡检", metadata: { [MOUNT]: true } })]
+    const { store, calls } = await primed({
+      sessions,
+      schedules: { m1: [makeSchedule({ id: "t1", sessionID: "m1" })] },
+    })
+    const result = await store.remove("t1", "m1", { deleteSession: true })
+    assert.deepEqual(result, { sessionDeleted: true })
+    assert.equal(countOf(calls, "session", "remove"), 1)
+    assert.equal(store.cachedRows().length, 0)
+  })
+
+  it("旧版无标记但标题为插件承载会话时允许清理", async () => {
+    const sessions = [makeSession({ id: "m1", title: "定时任务：巡检" })]
+    const { store, calls } = await primed({
+      sessions,
+      schedules: { m1: [makeSchedule({ id: "t1", sessionID: "m1" })] },
+    })
+    const result = await store.remove("t1", "m1", { deleteSession: true })
+    assert.equal(result.sessionDeleted, true)
+    assert.equal(countOf(calls, "session", "remove"), 1)
+  })
+
+  it("普通用户会话即使勾选也不删除", async () => {
+    const sessions = [makeSession({ id: "u1", title: "我的聊天" })]
+    const { store, calls } = await primed({
+      sessions,
+      schedules: { u1: [makeSchedule({ id: "t1", sessionID: "u1" })] },
+    })
+    const result = await store.remove("t1", "u1", { deleteSession: true })
+    assert.equal(result.sessionDeleted, false)
+    assert.equal(result.sessionDeleteSkipped, "not-mount")
+    assert.equal(hasCall(calls, "session", "remove"), false)
+  })
+
+  it("仍被其他任务引用的会话不删除", async () => {
+    const sessions = [makeSession({ id: "m1", title: "定时任务：共享", metadata: { [MOUNT]: true } })]
+    const { store, calls } = await primed({
+      sessions,
+      schedules: {
+        m1: [
+          makeSchedule({ id: "t1", sessionID: "m1" }),
+          makeSchedule({ id: "t2", sessionID: "m1", prompt: "另一条" }),
+        ],
+      },
+    })
+    const result = await store.remove("t1", "m1", { deleteSession: true })
+    assert.equal(result.sessionDeleted, false)
+    assert.equal(result.sessionDeleteSkipped, "referenced")
+    assert.equal(hasCall(calls, "session", "remove"), false)
+    assert.equal(store.cachedRows().length, 1)
+  })
+
+  it("会话删除失败：任务已删除，返回明确错误且不回滚任务", async () => {
+    const sessions = [makeSession({ id: "m1", title: "定时任务：巡检", metadata: { [MOUNT]: true } })]
+    const { client, calls } = createClient({
+      session: {
+        list: async () => ({ data: sessions, cursor: {} }),
+        remove: async () => {
+          throw new Error("session remove failed")
+        },
+      },
+      automation: {
+        list: async () => [makeSchedule({ id: "t1", sessionID: "m1" })],
+      },
+    })
+    const store = new ScheduleStore(client)
+    await store.listAll()
+    const result = await store.remove("t1", "m1", { deleteSession: true })
+    assert.equal(result.sessionDeleted, false)
+    assert.match(result.sessionDeleteError, /session remove failed/)
+    assert.equal(hasCall(calls, "automation", "delete"), true)
+    assert.equal(store.cachedRows().length, 0, "任务删除成功，不因会话清理失败而回滚")
+  })
+
+  it("删除后无法核对引用：保留会话并说明未验证", async () => {
+    const sessions = [makeSession({ id: "m1", title: "定时任务：巡检", metadata: { [MOUNT]: true } })]
+    let listCalls = 0
+    const { client, calls } = createClient({
+      session: { list: async () => ({ data: sessions, cursor: {} }) },
+      automation: {
+        list: async () => {
+          listCalls += 1
+          if (listCalls === 1) return [makeSchedule({ id: "t1", sessionID: "m1" })]
+          throw new Error("reference check unavailable")
+        },
+      },
+    })
+    const store = new ScheduleStore(client)
+    await store.listAll()
+    const result = await store.remove("t1", "m1", { deleteSession: true })
+    assert.equal(result.sessionDeleted, false)
+    assert.equal(result.sessionDeleteSkipped, "unverified")
+    assert.equal(hasCall(calls, "session", "remove"), false)
+  })
+
+  it("未勾选清理时即使承载会话也不删除", async () => {
+    const sessions = [makeSession({ id: "m1", title: "定时任务：巡检", metadata: { [MOUNT]: true } })]
+    const { store, calls } = await primed({
+      sessions,
+      schedules: { m1: [makeSchedule({ id: "t1", sessionID: "m1" })] },
+    })
+    const result = await store.remove("t1", "m1")
+    assert.deepEqual(result, { sessionDeleted: false })
+    assert.equal(hasCall(calls, "session", "remove"), false)
   })
 })

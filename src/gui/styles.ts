@@ -12,7 +12,7 @@ export function installStyles(): void {
   style.textContent = CSS
 }
 
-/** Component-scoped copy injected at the root of SchedulePage, like the other plugins. */
+/** Stylesheet text; `installStyles()` injects it once when the plugin loads. */
 export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to avoid host collisions. */
 
 .sc-root {
@@ -260,6 +260,33 @@ export const CSS: string = `/* Schedule Center styles. Namespaced with sc- to av
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+}
+
+/* Optional mount-session cleanup, shown only while the delete confirmation is
+   armed. Amber, not red: the task deletion is the destructive action; this is
+   an extra data-removal choice the user must consciously tick. */
+.sc-delete-session {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 2px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--sc-amber) 8%, transparent);
+  color: var(--sc-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.sc-delete-session input {
+  margin: 0;
+  accent-color: var(--sc-amber);
+}
+
+.sc-delete-session-hint {
+  color: var(--sc-faint);
+  font-size: 10.5px;
 }
 
 /* Next-fire countdown gets its own emphasized line: for a scheduled task
@@ -1525,6 +1552,31 @@ select.sc-input {
   padding: 8px;
   color: var(--sc-muted);
   font-size: 12px;
+}
+
+.sc-combo-more {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  padding: 6px 8px;
+  border: none;
+  border-top: 1px solid var(--sc-border);
+  border-radius: 0 0 7px 7px;
+  background: transparent;
+  color: var(--sc-accent);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.sc-combo-more:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sc-accent) 8%, transparent);
+}
+
+.sc-combo-more:disabled {
+  color: var(--sc-faint);
+  cursor: default;
 }
 
 .sc-mono {

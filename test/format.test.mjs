@@ -1,13 +1,12 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { outcomeLabel, describeWhen, actionText, actionLabel, actionArgsText, scheduleTitle } from "./.build/gui/format.js"
+import { outcomeLabel, describeWhen, actionText, actionLabel, actionArgsText, scheduleTitle, validateEndAt } from "./.build/gui/format.js"
 
 describe("批次4：官方状态/结果展示一致性", () => {
-  it("七个官方 outcome 各有明确文案，checked 不等于 skipped", () => {
+  it("六个官方 outcome 各有明确文案，checked 已随旧 Schedule API 移除", () => {
     const expected = {
       fired: "已触发",
       late: "延迟触发",
-      checked: "已检查条件",
       expired: "已过期",
       skipped: "已跳过",
       disabled: "已禁用",
@@ -16,16 +15,14 @@ describe("批次4：官方状态/结果展示一致性", () => {
     for (const [value, text] of Object.entries(expected)) {
       assert.equal(outcomeLabel(value)?.text, text, `outcome ${value}`)
     }
-    assert.notEqual(outcomeLabel("checked").text, outcomeLabel("skipped").text)
     assert.equal(outcomeLabel(undefined), null)
   })
 
   it("全部 outcome 都有 tone，不向用户暴露英文原值兜底", () => {
-    for (const value of ["fired", "late", "checked", "expired", "skipped", "disabled", "failed"]) {
+    for (const value of ["fired", "late", "expired", "skipped", "disabled", "failed"]) {
       const label = outcomeLabel(value)
       assert.ok(label)
       assert.ok(["ok", "warn", "bad"].includes(label.tone))
-      assert.equal(label.text, label.text, "文案非空")
       assert.ok(!/^[a-z]+$/.test(label.text), `${value} 不应显示英文原值`)
     }
   })
@@ -74,5 +71,31 @@ describe("B2.1：Action 展示不混淆 Code 与 Prompt", () => {
     assert.equal(titled, "命名任务")
     const fallback = scheduleTitle({ ...base, name: "", action: { type: "code", code: "x()" } })
     assert.ok(fallback.startsWith("[代码]"))
+  })
+})
+
+describe("0.2.2：结束时间校验", () => {
+  const now = Date.parse("2026-11-22T10:00:00")
+
+  it("无效时间被拒绝", () => {
+    assert.equal(validateEndAt("", now), "请选择有效时间")
+    assert.equal(validateEndAt("not-a-date", now), "请选择有效时间")
+  })
+
+  it("已过去的时间被拒绝", () => {
+    assert.equal(validateEndAt("2026-11-22T09:59:00", now), "结束时间已过去")
+    assert.equal(validateEndAt("2026-11-22T10:00:00", now), "结束时间已过去")
+  })
+
+  it("早于首次触发被拒绝", () => {
+    const first = Date.parse("2026-11-22T11:00:00")
+    assert.equal(validateEndAt("2026-11-22T10:30:00", now, first), "结束时间需晚于首次触发时间")
+    assert.equal(validateEndAt("2026-11-22T11:00:00", now, first), "结束时间需晚于首次触发时间")
+  })
+
+  it("晚于当前时间和首次触发时通过", () => {
+    const first = Date.parse("2026-11-22T11:00:00")
+    assert.equal(validateEndAt("2026-11-22T10:30:00", now), null)
+    assert.equal(validateEndAt("2026-11-22T12:00:00", now, first), null)
   })
 })

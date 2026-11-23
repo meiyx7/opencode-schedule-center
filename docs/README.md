@@ -1,5 +1,7 @@
 # OpenCode Schedule Center（定时任务）
 
+> **历史归档（0.1.x，旧 Schedule API）**：本文档保留为旧版 `experimental.schedules` 时期的设计说明，其中 `if` / `until`、按次数结束、`schedule.get` 等内容已随 OpenCode 2.3.2 的 Automation API 迁移移除。当前使用方式与实现请以仓库根目录 `README.md` 为准。
+
 OpenCode Desktop 的 GUI 插件：可视化查看、创建、暂停、恢复和删除实验性定时任务（`experimental.schedules`）。
 
 ## 功能

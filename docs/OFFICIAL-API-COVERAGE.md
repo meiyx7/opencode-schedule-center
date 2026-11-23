@@ -1,5 +1,7 @@
 # 官方 API 能力覆盖审计
 
+> **历史归档（2.2.5 / `schedule.*`）**：本文档审计的是旧版 `@opencode/client` 2.2.5 的 `experimental.schedule.*`。0.2.0 起插件已迁移到 OpenCode 2.3.2 的 `experimental.automation.*`，下表中的接口与缺口不再对应当前实现；当前覆盖情况请以根目录 `README.md` 和 `src/store.ts` 为准。
+
 - 基线：批次 1 收尾提交 `f564129`（分支 `fix/schedule-safety-batch1`）
 - 审计对象：`@opencode/client` 2.2.5 / `@opencode/plugin` 2.2.5 的 `experimental.schedule.*`
 - 方法：逐个核对 `src/` 真实调用链 + SDK `dist/promise/generated/types.d.ts` 官方 Schema + `api.d.ts`，**不采信 README 与本地类型声明的自述**

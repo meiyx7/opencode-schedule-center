@@ -25,6 +25,38 @@ export interface ListResult {
 
 const SESSION_PAGE_SIZE = 200
 const MAX_SESSION_PAGES = 100
+/** Page size for the bind-session picker; small enough to open fast, large enough to browse. */
+const SESSION_PICKER_PAGE_SIZE = 50
+
+/**
+ * Metadata marker written on sessions this plugin creates as a task's mount
+ * session. It is the authoritative ownership signal for optional cleanup;
+ * legacy sessions created before 0.2.2 fall back to the title prefix.
+ */
+export const MOUNT_SESSION_MARKER = "opencode-schedule-center.mount"
+
+/** Whether a session was created by this plugin as a dedicated mount session. */
+export function isMountSession(session: SessionInfo | undefined): boolean {
+  if (!session) return false
+  if (session.metadata?.[MOUNT_SESSION_MARKER] === true) return true
+  const title = session.title?.trim() ?? ""
+  return title === "定时任务" || title.startsWith("定时任务：")
+}
+
+/** Whether an automation is attached to the session as creator or prompt target. */
+export function referencesSession(schedule: ScheduleInfo, sessionID: string): boolean {
+  if (schedule.sessionID === sessionID) return true
+  return schedule.action.type === "prompt" && schedule.action.to.session === sessionID
+}
+
+/** Outcome of deleting a task, including the optional mount-session cleanup. */
+export interface RemoveResult {
+  sessionDeleted: boolean
+  /** The session delete request failed; the task itself was already removed. */
+  sessionDeleteError?: string
+  /** Cleanup was deliberately skipped: not a mount session, missing, still referenced, or unverifiable. */
+  sessionDeleteSkipped?: "missing" | "not-mount" | "referenced" | "unverified"
+}
 
 /**
  * Automation visibility comes solely from the official global
@@ -98,6 +130,27 @@ export class ScheduleStore {
     // Enrich, never drop: a live session (just-created mount session carrying
     // model/agent/directory) must survive a metadata refresh.
     for (const [id, session] of sessions) this.sessions.set(id, session)
+  }
+
+  /**
+   * One page for the bind-session picker. Uses the official server-side
+   * `search` and `cursor` instead of loading a fixed first page locally, so
+   * older sessions stay reachable and the picker does not scan the history.
+   */
+  async sessionsPage(input: { search?: string; cursor?: string; limit?: number } = {}): Promise<{
+    sessions: SessionInfo[]
+    next?: string
+  }> {
+    const search = input.search?.trim()
+    const response = await this.client.session.list({
+      limit: input.limit ?? SESSION_PICKER_PAGE_SIZE,
+      ...(search ? { search } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+    })
+    return {
+      sessions: response.data ?? [],
+      ...(response.cursor?.next ? { next: response.cursor.next } : {}),
+    }
   }
 
   /**
@@ -254,6 +307,7 @@ export class ScheduleStore {
 
     const session = await this.client.session.create({
       title: draft.name ? `定时任务：${draft.name}` : "定时任务",
+      metadata: { [MOUNT_SESSION_MARKER]: true },
       ...(draft.model ? { model: draft.model } : {}),
       ...(draft.agent ? { agent: draft.agent } : {}),
       ...(draft.directory ? { location: { directory: draft.directory } } : {}),
@@ -341,34 +395,64 @@ export class ScheduleStore {
     // caller must not be able to smuggle session-level settings into a task
     // that is supposed to reuse the target session as-is.
     const { model: _m, agent: _a, directory: _d, ...clean } = draft
+    // Snapshot BEFORE create. A user session can already own unrelated tasks;
+    // without this baseline a rejected create could "adopt" one of them.
+    const before = await this.automationIDsForSession(sessionID)
     let response: ScheduleInfo
     try {
       // buildCreateInput sets both sessionID and action.to.session to this id.
       const created = await this.client.experimental.automation.create(buildCreateInput(sessionID, clean))
       response = fromAutomation(created)
     } catch (error) {
-      return this.reconcileBoundCreate(session, draft, error)
+      return this.reconcileBoundCreate(session, draft, error, before)
     }
     this.commitCreated(session, response)
     return response
   }
 
+  /** Ids already present for a session, used to tell a lost-response write from older tasks. */
+  private async automationIDsForSession(sessionID: string): Promise<Set<string> | undefined> {
+    try {
+      const list = await this.client.experimental.automation.list({ sessionID })
+      return new Set(list.map((item) => item.id))
+    } catch {
+      return undefined
+    }
+  }
+
   /**
    * Bound-mode create failure: verify whether a lost response hid a successful
    * write, but NEVER delete the target session — it is the user's, not a mount
-   * session we created. If nothing was written, surface the original error
-   * unchanged (the caller keeps its session and its draft).
+   * session we created. Only an id that did NOT exist before this create may be
+   * adopted; adopting a pre-existing task would report a false success.
    */
-  private async reconcileBoundCreate(session: SessionInfo, draft: CreateDraft, error: unknown): Promise<ScheduleInfo> {
+  private async reconcileBoundCreate(
+    session: SessionInfo,
+    draft: CreateDraft,
+    error: unknown,
+    before: Set<string> | undefined,
+  ): Promise<ScheduleInfo> {
+    // A declared business rejection proves the server refused the write, so
+    // there is nothing to reconcile and the original error is the most useful
+    // message. Only uncertain failures need the baseline comparison below.
+    if (classifyCreateError(error) === "explicit-rejection") throw error
+    if (!before) {
+      // No baseline: a matching row cannot be proven to be this create's write.
+      throw new Error(
+        `任务创建结果无法确认（${describeError(error)}）；请刷新任务列表确认是否已创建，避免重复提交。`,
+      )
+    }
     let existing: ScheduleInfo[] | undefined
     try {
       existing = (await this.client.experimental.automation.list({ sessionID: session.id })).map(fromAutomation)
     } catch {
       existing = undefined
     }
-    if (existing && existing.length > 0) {
-      const created =
-        existing.find((item) => item.action.type === "prompt" && item.action.prompt === draft.prompt) ?? existing[0]
+    const created = existing?.find(
+      (item) =>
+        !before.has(item.id) && item.action.type === "prompt" && item.action.prompt === draft.prompt,
+    )
+    if (created) {
       this.commitCreated(session, created)
       return created
     }
@@ -472,13 +556,57 @@ export class ScheduleStore {
   }
 
   /**
-   * Delete the automation only. A display title is never proof of ownership, so
-   * no session is removed here — not even one this plugin created earlier.
-   * An unused mount session is harmless and stays under the user's control.
+   * Delete the automation. Session cleanup is opt-in and limited to a session
+   * this plugin created for the task, with no other automation still attached.
+   * A display title alone is not proof of ownership unless it is the legacy
+   * "定时任务：" prefix from sessions created before the metadata marker existed.
    */
-  async remove(scheduleID: string, _sessionID?: string): Promise<void> {
+  async remove(
+    scheduleID: string,
+    sessionID?: string,
+    options: { deleteSession?: boolean } = {},
+  ): Promise<RemoveResult> {
     await this.client.experimental.automation.delete({ automationID: scheduleID })
     this.dropFromCache(scheduleID)
+
+    const result: RemoveResult = { sessionDeleted: false }
+    if (!options.deleteSession || !sessionID) return result
+
+    const session = this.sessions.get(sessionID)
+    if (!session) return { ...result, sessionDeleteSkipped: "missing" }
+    if (!isMountSession(session)) return { ...result, sessionDeleteSkipped: "not-mount" }
+    // The task is already gone from the cache, so any remaining reference is
+    // another task that still needs this session.
+    if (this.sessionReferenced(sessionID)) return { ...result, sessionDeleteSkipped: "referenced" }
+
+    // Re-check the server after the delete: the cache can be stale, and this is
+    // the last guard before removing a session that may contain run history.
+    try {
+      const remaining = await this.client.experimental.automation.list({ sessionID })
+      const stillReferenced = remaining.some(
+        (item) => item.id !== scheduleID && referencesSession(fromAutomation(item), sessionID),
+      )
+      if (stillReferenced) return { ...result, sessionDeleteSkipped: "referenced" }
+    } catch {
+      // Cannot prove the session is unused: keep it rather than risk deleting a
+      // session another task still needs.
+      return { ...result, sessionDeleteSkipped: "unverified" }
+    }
+
+    try {
+      await this.client.session.remove({ sessionID })
+      this.sessions.delete(sessionID)
+      return { ...result, sessionDeleted: true }
+    } catch (error) {
+      return { ...result, sessionDeleteError: describeError(error) }
+    }
+  }
+
+  private sessionReferenced(sessionID: string): boolean {
+    for (const schedule of this.automationCache.values()) {
+      if (referencesSession(schedule, sessionID)) return true
+    }
+    return false
   }
 
   /**

@@ -2,6 +2,7 @@ import { render } from "solid-js/web"
 import type { Context } from "@opencode/plugin/gui"
 import { ScheduleDialog } from "../src/gui/dialog"
 import { installStyles } from "../src/gui/styles"
+import { durationMs } from "../src/gui/format"
 import { ScheduleStore } from "../src/store"
 import type { ScheduleRow } from "../src/types"
 
@@ -16,7 +17,7 @@ function makeRow(overrides: Partial<ScheduleRow["schedule"]>, sessionTitle: stri
       name: undefined,
       when: { type: "cron", cron: "0 9 * * 1-5", tz: "Asia/Shanghai" },
       tz: "Asia/Shanghai",
-      action: { type: "prompt", prompt: "检查依赖更新并总结" },
+      action: { type: "prompt", prompt: "检查依赖更新并总结", to: { session: "ses_demo" } },
       status: "active",
       runCount: 0,
       time: { created: now - 86_400_000, updated: now - 86_400_000 },
@@ -82,13 +83,19 @@ const live = rows.filter((row) => row.schedule.status !== "done")
 
 // Give each demo task its own session so the advanced-option chips vary.
 rows.forEach((row, index) => {
-  row.schedule.sessionID = `ses_demo_${index}`
+  const sessionID = `ses_demo_${index}`
+  row.schedule.sessionID = sessionID
+  if (row.schedule.action.type === "prompt") row.schedule.action.to = { session: sessionID }
 })
 
 const demoSessions = rows.map((row, index) => ({
   id: row.schedule.sessionID ?? `ses_demo_${index}`,
   title: row.sessionTitle,
 }))
+
+// Mount sessions created during the preview stay here so a sweep after creation
+// still sees their metadata (required by the optional session cleanup).
+const extraSessions: Array<{ id: string; title: string; metadata?: Record<string, unknown> }> = []
 
 function MockDialog(props: { title?: string; children?: unknown }) {
   return (
@@ -128,11 +135,21 @@ const ctx = {
           return toAutomation(row)
         },
         create: async (input: any) => {
+          // The real host folds "in 30 minutes" into an absolute timestamp.
+          // Do the same so the preview never renders NaN dates.
+          const absolute = (value: unknown) => {
+            if (typeof value !== "string" || !value.startsWith("in ")) return value
+            const ms = durationMs(value.slice(3))
+            return ms === null ? value : new Date(Date.now() + ms).toISOString()
+          }
+          const trigger = input.trigger?.type === "at"
+            ? { ...input.trigger, at: absolute(input.trigger.at) }
+            : input.trigger
           const schedule: ScheduleRow["schedule"] = {
             id: "sch_created_" + Math.random().toString(36).slice(2, 8),
             sessionID: input.sessionID,
             name: input.name,
-            when: input.trigger,
+            when: trigger,
             tz: "Asia/Shanghai",
             action: input.action,
             status: "active",
@@ -227,21 +244,45 @@ const ctx = {
       }),
     },
     session: {
-      list: async () => ({
-        // Derive from rows so created mount sessions show up in sweeps too.
-        data: [...demoSessions, ...rows
-          .filter((row) => !demoSessions.some((session) => session.id === row.schedule.sessionID))
+      list: async (input?: { limit?: number; search?: string; cursor?: string }) => {
+        // Derive from rows so sessions added by other means still show up.
+        const all = [...demoSessions, ...extraSessions, ...rows
+          .filter((row) => ![...demoSessions, ...extraSessions].some((session) => session.id === row.schedule.sessionID))
           .map((row, index) => ({
             id: row.schedule.sessionID ?? `ses_extra_${index}`,
             title: row.sessionTitle,
-          }))],
-        cursor: {},
-      }),
-      create: async () => ({ id: "ses_new", title: "定时任务：新任务" }),
+          }))]
+        const term = input?.search?.trim().toLowerCase()
+        const matched = term
+          ? all.filter((session) => `${session.title} ${session.id}`.toLowerCase().includes(term))
+          : all
+        const start = input?.cursor ? Number(input.cursor) : 0
+        const limit = input?.limit ?? matched.length
+        const data = matched.slice(start, start + limit)
+        return {
+          data,
+          cursor: start + limit < matched.length ? { next: String(start + limit) } : {},
+        }
+      },
+      create: async (input?: { title?: string; metadata?: Record<string, unknown> }) => {
+        const session = {
+          id: "ses_new_" + Math.random().toString(36).slice(2, 8),
+          title: input?.title ?? "定时任务",
+          ...(input?.metadata ? { metadata: input.metadata } : {}),
+        }
+        extraSessions.push(session)
+        return session
+      },
       get: async ({ sessionID }: { sessionID: string }) =>
-        [...demoSessions].find((session) => session.id === sessionID) ?? { id: sessionID, title: sessionID },
+        [...demoSessions, ...extraSessions].find((session) => session.id === sessionID) ?? {
+          id: sessionID,
+          title: sessionID,
+        },
       switchModel: async () => undefined,
-      remove: async () => undefined,
+      remove: async ({ sessionID }: { sessionID: string }) => {
+        const index = extraSessions.findIndex((session) => session.id === sessionID)
+        if (index >= 0) extraSessions.splice(index, 1)
+      },
     },
   },
   sessions: { current: () => undefined },

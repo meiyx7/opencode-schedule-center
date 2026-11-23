@@ -3,7 +3,7 @@ import type { Context } from "@opencode/plugin/gui"
 import type { ScheduleRow } from "../types"
 import { actionText, clockText, describeWhen, outcomeLabel, relativeTime } from "./format"
 import { ScheduleConfig, ScheduleDetail, ScheduleForm, Icon } from "./form"
-import { CSS } from "./styles"
+import { isMountSession, referencesSession } from "../store"
 import type { ScheduleStore } from "../store"
 import { createScanCoordinator } from "../scan-coordinator"
 
@@ -37,6 +37,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
   const [busyId, setBusyId] = createSignal("")
   const [filter, setFilter] = createSignal<Filter>("all")
   const [confirming, setConfirming] = createSignal<string>("")
+  const [deleteSession, setDeleteSession] = createSignal(false)
   const [search, setSearch] = createSignal("")
   const [nowTick, setNowTick] = createSignal(0)
 
@@ -93,7 +94,20 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
     setError("")
     try {
       if (action === "delete") {
-        await props.store.remove(row.schedule.id, row.schedule.sessionID ?? row.session?.id)
+        const result = await props.store.remove(
+          row.schedule.id,
+          row.schedule.sessionID ?? row.session?.id,
+          { deleteSession: deleteSession() },
+        )
+        if (result.sessionDeleteError) {
+          setError(`任务已删除，但承载会话删除失败：${result.sessionDeleteError}`)
+        } else if (result.sessionDeleteSkipped === "referenced") {
+          setError("任务已删除；承载会话仍被其他任务使用，未删除。")
+        } else if (result.sessionDeleteSkipped === "unverified") {
+          setError("任务已删除；无法确认承载会话是否仍被其他任务使用，未删除。")
+        } else if (result.sessionDeleteSkipped) {
+          setError("任务已删除；无法确认承载会话归属，未删除。")
+        }
         if (expanded() === row.schedule.id) setExpanded("")
         // Deletion is already reflected in the store cache; rebuild locally.
         setRows(props.store.cachedRows())
@@ -118,6 +132,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
     } finally {
       setBusyId("")
       setConfirming("")
+      setDeleteSession(false)
     }
   }
 
@@ -157,17 +172,18 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
     })
   })
 
+  // Optional cleanup is offered only for a mount session this plugin created,
+  // after confirming no other task still uses it as creator or prompt target.
+  const canDeleteSession = (row: ScheduleRow) => {
+    const sessionID = row.schedule.sessionID
+    if (!sessionID || !isMountSession(row.session)) return false
+    return !rows().some(
+      (other) => other.schedule.id !== row.schedule.id && referencesSession(other.schedule, sessionID),
+    )
+  }
+
   return (
-    <div
-      class="sc-root"
-      ref={(element) => {
-        const style = document.createElement("style")
-        style.textContent = CSS
-        element.prepend(style)
-        return () => clearInterval(timer)
-      }}
-      data-embedded={props.embedded ? "true" : undefined}
-    >
+    <div class="sc-root" data-embedded={props.embedded ? "true" : undefined}>
       <Show when={tab() === "list"}>
         <section class="sc-hero">
           <div class="sc-hero-copy">
@@ -413,6 +429,7 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                           } else {
                             // Two clicks, no modal: first arms, clicking elsewhere disarms.
                             setConfirming(row.schedule.id)
+                            setDeleteSession(false)
                             const scheduleID = row.schedule.id
                             const disarm = (click: Event) => {
                               const target = click.target as HTMLElement
@@ -427,6 +444,23 @@ export function SchedulePage(props: { ctx: Context; store: ScheduleStore; embedd
                       </button>
                     </div>
                   </div>
+                  <Show when={confirming() === row.schedule.id && canDeleteSession(row)}>
+                    <label
+                      class="sc-delete-session"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={deleteSession()}
+                        onChange={(event) => setDeleteSession(event.currentTarget.checked)}
+                      />
+                      <span>
+                        同时删除承载会话
+                        {row.session?.title?.trim() ? `「${row.session.title.trim()}」` : ""}
+                      </span>
+                      <span class="sc-delete-session-hint">可能包含历史运行记录</span>
+                    </label>
+                  </Show>
                   <Show when={row.schedule.status === "active" && row.schedule.nextDueAt !== undefined}>
                     <div class="sc-card-next">
                       <svg class="sc-next-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">

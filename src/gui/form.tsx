@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
 import type { ModelProviderGroup, ScheduleRow, ScheduleWhen, SessionInfo, WhenDraft } from "../types"
-import { actionArgsText, actionLabel, clockText, describeWhen, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime } from "./format"
+import { actionArgsText, actionLabel, clockText, describeWhen, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime, validateEndAt } from "./format"
 import { Combobox, type ComboOption } from "./combobox"
 import type { ScheduleStore } from "../store"
 
@@ -37,6 +37,23 @@ const CRON_PRESETS = [
   { label: "每 30 分钟", value: "*/30 * * * *" },
   { label: "每周一 09:00", value: "0 9 * * 1" },
 ]
+
+/**
+ * The plugin runs on the desktop's own server, so sessions it reads belong to
+ * that server. `servers.list()[0]` is list order, not identity: find the
+ * builtin ref first and only fall back to the first id when none is marked.
+ */
+function hostServerID(ctx: Context): string | undefined {
+  try {
+    const ids = ctx.servers.list()
+    for (const id of ids) {
+      if (ctx.servers.get(id)?.builtin) return id
+    }
+    return ids[0]
+  } catch {
+    return undefined
+  }
+}
 
 /** One-tap times for the "at" mode; values are resolved when clicked. */
 const AT_PRESETS: Array<{ label: string; at: () => string }> = [
@@ -155,7 +172,16 @@ export function ScheduleForm(props: {
   // non-empty sessionID = bind the prompt to an existing session the user owns.
   const [bindSession, setBindSession] = createSignal("")
   const [bindSessions, setBindSessions] = createSignal<SessionInfo[]>([])
+  // The chosen session is kept separately: a later search page may not contain
+  // it, but its title must stay visible and the selection must stay stable.
+  const [bindSelected, setBindSelected] = createSignal<SessionInfo | undefined>(undefined)
+  const [bindCursor, setBindCursor] = createSignal<string | undefined>(undefined)
+  const [bindLoading, setBindLoading] = createSignal(false)
+  const [bindQuery, setBindQuery] = createSignal("")
+  const [bindError, setBindError] = createSignal("")
   const [bindPickerOpen, setBindPickerOpen] = createSignal(false)
+  let bindRequest = 0
+  let bindTimer: ReturnType<typeof setTimeout> | undefined
   const [inMinutes, setInMinutes] = createSignal("30")
   // 记住打开表单时的默认值；dirty 不能拿“此刻 + 1 小时”当基线，否则时间流逝本身会把表单变脏。
   const initialAt = defaultAt()
@@ -169,6 +195,7 @@ export function ScheduleForm(props: {
   const [endAfter, setEndAfter] = createSignal("")
   const initialEndAt = defaultAt()
   const [endAt, setEndAt] = createSignal(initialEndAt)
+  const [endAtEdited, setEndAtEdited] = createSignal(false)
   const [prompt, setPrompt] = createSignal("")
   // Advanced options start collapsed; the trigger/timing choices are the
   // primary path. Signals below live in this scope, so expanding/collapsing
@@ -187,27 +214,98 @@ export function ScheduleForm(props: {
     else setModelHint("模型列表加载失败，将使用会话默认模型")
     if (agentList.status === "fulfilled") setAgents(agentList.value)
     if (directoryList.status === "fulfilled") setDirectories(directoryList.value)
-    // Existing sessions for the "bind to session" picker. Best-effort: a
-    // failure here only hides the option, it never blocks normal creation.
-    try {
-      const response = await props.store.api.session.list({ limit: 100 })
-      setBindSessions(response.data ?? [])
-    } catch {
-      // leave the picker empty; default mount-session flow is unaffected
-    }
+  })
+  onCleanup(() => {
+    if (bindTimer) clearTimeout(bindTimer)
   })
 
   const bound = () => bindSession() !== ""
-  const selectedBindSession = createMemo(() => bindSessions().find((session) => session.id === bindSession()))
-  const bindSessionOptions = createMemo<ComboOption[]>(() => [
-    { value: "", label: "新建专用会话", note: "默认 · 自动创建承载会话" },
-    ...bindSessions().map((session) => ({
-      value: session.id,
-      label: session.title?.trim() || session.id,
-      note: session.directory ? dirName(session.directory) : undefined,
-      keywords: session.id,
-    })),
-  ])
+  const selectedBindSession = createMemo(() => {
+    const id = bindSession()
+    if (!id) return undefined
+    return (
+      bindSessions().find((session) => session.id === id) ??
+      (bindSelected()?.id === id ? bindSelected() : undefined)
+    )
+  })
+  const bindSessionOptions = createMemo<ComboOption[]>(() => {
+    const selected = selectedBindSession()
+    const sessions = bindSessions()
+    // Keep the chosen session visible even when the current search page does
+    // not include it.
+    const visible =
+      selected && !sessions.some((session) => session.id === selected.id)
+        ? [selected, ...sessions]
+        : sessions
+    return [
+      { value: "", label: "新建专用会话", note: "默认 · 自动创建承载会话" },
+      ...visible.map((session) => ({
+        value: session.id,
+        label: session.title?.trim() || session.id,
+        note: session.directory ? dirName(session.directory) : undefined,
+        keywords: session.id,
+      })),
+    ]
+  })
+
+  async function loadBindSessions(reset: boolean, query: string): Promise<void> {
+    const seq = ++bindRequest
+    setBindLoading(true)
+    setBindError("")
+    try {
+      const page = await props.store.sessionsPage({
+        limit: 50,
+        search: query,
+        ...(!reset && bindCursor() ? { cursor: bindCursor() } : {}),
+      })
+      if (seq !== bindRequest) return
+      setBindSessions((current) => {
+        if (reset) return page.sessions
+        const seen = new Set(current.map((session) => session.id))
+        return [...current, ...page.sessions.filter((session) => !seen.has(session.id))]
+      })
+      setBindCursor(page.next)
+    } catch (cause) {
+      if (seq !== bindRequest) return
+      setBindError(cause instanceof Error ? cause.message : String(cause))
+      if (reset) setBindSessions([])
+      setBindCursor(undefined)
+    } finally {
+      if (seq === bindRequest) setBindLoading(false)
+    }
+  }
+
+  function openBindPicker(): void {
+    if (bindPickerOpen()) {
+      if (bindTimer) {
+        clearTimeout(bindTimer)
+        bindTimer = undefined
+      }
+      setBindPickerOpen(false)
+      return
+    }
+    setBindPickerOpen(true)
+    setBindQuery("")
+    setBindCursor(undefined)
+    void loadBindSessions(true, "")
+  }
+
+  function changeBindQuery(value: string): void {
+    setBindQuery(value)
+    // The old cursor belongs to the previous query; loading more before the
+    // debounced search lands would append unrelated sessions.
+    setBindCursor(undefined)
+    if (bindTimer) clearTimeout(bindTimer)
+    bindTimer = setTimeout(() => {
+      bindTimer = undefined
+      void loadBindSessions(true, value)
+    }, 250)
+  }
+
+  function loadMoreBindSessions(): void {
+    if (bindLoading() || !bindCursor()) return
+    void loadBindSessions(false, bindQuery())
+  }
 
   const providerOptions = createMemo<ComboOption[]>(() => [
     { value: "", label: "跟随会话", note: "默认模型，不指定" },
@@ -387,9 +485,26 @@ export function ScheduleForm(props: {
     if (!isRepeating() || endKind() !== "after") return false
     return minutesExpression(endAfter()) === undefined
   }
+  /**
+   * The one-hour default end time can be before the first run (e.g. a 60-minute
+   * interval or tomorrow's cron), which would make the form invalid the moment
+   * "指定时间" is selected. Until the user edits the field, move it to a day
+   * after the first predicted run.
+   */
+  function chooseEndKind(next: EndKind): void {
+    setEndKind(next)
+    if (next !== "at" || endAtEdited()) return
+    const first = previewRunsLive()[0]
+    const base = first !== undefined ? first + 86_400_000 : Date.now() + 86_400_000
+    setEndAt(localInput(new Date(Math.max(Date.now() + 3_600_000, base))))
+  }
   const invalidEndAt = () => {
     if (!isRepeating() || endKind() !== "at") return false
-    return Number.isNaN(Date.parse(endAt()))
+    return validateEndAt(endAt(), now(), previewRunsLive()[0]) !== null
+  }
+  const endAtHint = () => {
+    if (!isRepeating() || endKind() !== "at") return ""
+    return validateEndAt(endAt(), now(), previewRunsLive()[0]) ?? ""
   }
   // 绝对时间必须晚于当前时刻；否则到点即触发或永远不触发。
   const invalidAt = () => {
@@ -518,7 +633,7 @@ export function ScheduleForm(props: {
                   title="绑定到已有会话"
                   aria-label="绑定到已有会话"
                   aria-expanded={bindPickerOpen()}
-                  onClick={() => setBindPickerOpen(!bindPickerOpen())}
+                  onClick={openBindPicker}
                 >
                   <Icon name={bound() ? "link" : "search"} />
                 </button>
@@ -540,6 +655,7 @@ export function ScheduleForm(props: {
                       if (nameFromSession()) setName("")
                       setNameFromSession(false)
                       setBindSession("")
+                      setBindSelected(undefined)
                       setBindPickerOpen(false)
                     }}
                   >
@@ -554,24 +670,41 @@ export function ScheduleForm(props: {
                     value={bindSession()}
                     options={bindSessionOptions()}
                     placeholder="搜索会话标题或 ID"
-                    emptyText="没有匹配的会话"
+                    emptyText={bindLoading() ? "正在搜索…" : "没有匹配的会话"}
                     autoOpen
+                    remote
+                    loading={bindLoading()}
+                    hasMore={Boolean(bindCursor())}
+                    onQueryChange={changeBindQuery}
+                    onLoadMore={loadMoreBindSessions}
                     onSelect={(value) => {
+                      if (bindTimer) {
+                        clearTimeout(bindTimer)
+                        bindTimer = undefined
+                      }
+                      // The chosen row may be the preserved selection rather
+                      // than an item in the current search page.
+                      const chosen = value
+                        ? bindSessions().find((session) => session.id === value) ??
+                          (bindSelected()?.id === value ? bindSelected() : undefined)
+                        : undefined
+                      setBindSelected(chosen)
                       setBindSession(value)
                       setBindPickerOpen(false)
                       // Fill the visible name box with the chosen session's
                       // title so the selection is obvious. Only overwrite a
                       // name that is empty or was itself filled from a session;
                       // never clobber a name the user typed by hand.
-                      if (value) {
-                        const title = bindSessions().find((session) => session.id === value)?.title?.trim()
-                        if (title && (!name().trim() || nameFromSession())) {
-                          setName(title)
-                          setNameFromSession(true)
-                        }
+                      const title = chosen?.title?.trim()
+                      if (title && (!name().trim() || nameFromSession())) {
+                        setName(title)
+                        setNameFromSession(true)
                       }
                     }}
                   />
+                  <Show when={bindError()}>
+                    <p class="sc-hint sc-hint-bad">会话列表加载失败：{bindError()}</p>
+                  </Show>
                 </div>
               </Show>
             </div>
@@ -770,7 +903,7 @@ export function ScheduleForm(props: {
                     {(option) => (
                       <button
                         type="button" class="sc-chip" classList={{ active: endKind() === option.id }}
-                        onClick={() => setEndKind(option.id)}
+                        onClick={() => chooseEndKind(option.id)}
                       >
                         {option.label}
                       </button>
@@ -799,11 +932,14 @@ export function ScheduleForm(props: {
                     <input
                       id="sc-end-at" class="sc-input sc-datetime" type="datetime-local"
                       aria-label="结束时间" value={endAt()}
-                      onInput={(event) => setEndAt(event.currentTarget.value)}
+                      onInput={(event) => {
+                        setEndAtEdited(true)
+                        setEndAt(event.currentTarget.value)
+                      }}
                     />
                     <span>结束</span>
                   </div>
-                  <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidEndAt() }}>请选择有效时间</p>
+                  <p class="sc-mode-hint sc-hint sc-hint-bad" classList={{ "sc-hint-off": !invalidEndAt() }}>{endAtHint()}</p>
                 </Show>
               </Show>
             </div>
@@ -1111,17 +1247,13 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Cont
   const openSession = () => {
     const sessionID = sessionServerID()
     if (!sessionID) return
-    const serverID = props.ctx.servers.list()[0]
+    const serverID = hostServerID(props.ctx)
     if (!serverID) return
     props.ctx.tabs.open({ server: serverID, id: sessionID }, { focus: true })
   }
   const canOpenSession = () => {
     if (!sessionServerID()) return false
-    try {
-      return props.ctx.servers.list().length > 0
-    } catch {
-      return false
-    }
+    return hostServerID(props.ctx) !== undefined
   }
   return (
     <div
