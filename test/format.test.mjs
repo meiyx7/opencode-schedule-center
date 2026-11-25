@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { outcomeLabel, describeWhen, actionText, actionLabel, actionArgsText, scheduleTitle, validateEndAt } from "./.build/gui/format.js"
+import { outcomeLabel, describeWhen, actionText, actionLabel, actionBody, actionArgsText, scheduleTitle, validateEndAt } from "./.build/gui/format.js"
 
 describe("批次4：官方状态/结果展示一致性", () => {
   it("六个官方 outcome 各有明确文案，checked 已随旧 Schedule API 移除", () => {
@@ -57,6 +57,22 @@ describe("B2.1：Action 展示不混淆 Code 与 Prompt", () => {
     assert.equal(actionArgsText(action), JSON.stringify({ tz: "Asia/Shanghai" }), "args 完整序列化")
   })
 
+  it("shell action 显示原始命令，不误标为代码，也不复制 undefined", () => {
+    const action = { type: "shell", command: "echo hello" }
+    assert.equal(actionText(action), "[Shell] echo hello")
+    assert.equal(actionLabel(action), "Shell 命令")
+    assert.equal(actionBody(action), "echo hello")
+    assert.equal(actionArgsText(action), undefined)
+  })
+
+  it("未来新增的 action 类型也有可读兜底，不渲染 undefined", () => {
+    const action = { type: "future-kind" }
+    assert.equal(actionText(action), "[未知动作] future-kind")
+    assert.equal(actionLabel(action), "未知动作")
+    assert.equal(actionBody(action), "")
+    assert.equal(actionArgsText(action), undefined)
+  })
+
   it("scheduleTitle 对 code action 不用 name 时也不把它伪装成提示词", () => {
     const base = {
       id: "t-1",
@@ -71,6 +87,8 @@ describe("B2.1：Action 展示不混淆 Code 与 Prompt", () => {
     assert.equal(titled, "命名任务")
     const fallback = scheduleTitle({ ...base, name: "", action: { type: "code", code: "x()" } })
     assert.ok(fallback.startsWith("[代码]"))
+    const shellFallback = scheduleTitle({ ...base, name: "", action: { type: "shell", command: "echo hi" } })
+    assert.ok(shellFallback.startsWith("[Shell]"))
   })
 })
 

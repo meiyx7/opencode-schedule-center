@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import type { Context } from "@opencode/plugin/gui"
 import type { ModelProviderGroup, ScheduleRow, ScheduleWhen, SessionInfo, WhenDraft } from "../types"
-import { actionArgsText, actionLabel, clockText, describeWhen, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime, validateEndAt } from "./format"
+import { clockText, describeAction, describeWhen, dirName, isValidCron, modelRefLabel, outcomeLabel, previewRuns, relativeTime, validateEndAt } from "./format"
 import { Combobox, type ComboOption } from "./combobox"
 import type { ScheduleStore } from "../store"
 
@@ -1238,7 +1238,8 @@ function CopyButton(props: { text: string; label: string }) {
 export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Context }) {
   const { schedule } = props.row
   const outcome = outcomeLabel(schedule.lastOutcome)
-  const actionArgs = actionArgsText(schedule.action)
+  const action = describeAction(schedule.action)
+  const actionArgs = action.args
   const model = modelRefLabel(props.row.session?.model)
   const agent = props.row.session?.agent?.trim() ?? ""
   const directory = props.row.session?.location?.directory ?? props.row.session?.directory ?? ""
@@ -1337,15 +1338,10 @@ export function ScheduleDetail(props: { row: ScheduleRow; now: number; ctx: Cont
               <span class="sc-detail-value">{describeWhen(schedule.when)}</span>
               <span class="sc-detail-key">时区</span>
               <span class="sc-detail-value">{schedule.tz || "—"}</span>
-              <span class="sc-detail-key">{actionLabel(schedule.action)}</span>
+              <span class="sc-detail-key">{action.label}</span>
               <span class="sc-detail-value sc-prompt-text">
-                <span class="sc-detail-text">
-                  {schedule.action.type === "prompt" ? schedule.action.prompt : schedule.action.code}
-                </span>
-                <CopyButton
-                  text={schedule.action.type === "prompt" ? schedule.action.prompt : schedule.action.code}
-                  label={actionLabel(schedule.action)}
-                />
+                <span class="sc-detail-text">{action.body}</span>
+                <CopyButton text={action.body} label={action.label} />
               </span>
               <Show when={actionArgs}>
                 <span class="sc-detail-key">代码参数</span>

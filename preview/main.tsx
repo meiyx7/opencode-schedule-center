@@ -58,6 +58,18 @@ const rows: ScheduleRow[] = [
   ),
   makeRow(
     {
+      name: "Shell 巡检",
+      when: { type: "every", every: "1 hour" },
+      action: { type: "shell", command: "echo hello && date" },
+      nextDueAt: now + 30 * 60_000,
+      lastOutcome: "fired",
+      lastFiredAt: now - 30 * 60_000,
+      runCount: 2,
+    },
+    "定时任务：Shell 巡检",
+  ),
+  makeRow(
+    {
       name: "旧任务",
       status: "paused",
       lastOutcome: "late",

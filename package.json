@@ -1,7 +1,7 @@
 {
   "name": "opencode-schedule-center",
   "version": "0.2.2",
-  "description": "Scheduled tasks dashboard for OpenCode: create, pause, resume and delete experimental schedules with countdowns and cron previews.",
+  "description": "Scheduled tasks dashboard for OpenCode: create, pause, resume and delete automations with countdowns and cron previews.",
   "type": "module",
   "license": "MIT",
   "author": "meiyx7",
@@ -31,15 +31,15 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@opencode/client": "2.3.2",
-    "@opencode/plugin": "2.3.2"
+    "@opencode/client": "2.4.1",
+    "@opencode/plugin": "2.4.1"
   },
   "peerDependencies": {
-    "effect": "^4.0.0"
+    "effect": "^4.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "effect": "4.0.6",
+    "effect": "4.1.0",
     "esbuild": "^0.28.2",
     "solid-js": "^1.9.5",
     "typescript": "^5.7.0",

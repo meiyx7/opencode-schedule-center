@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.2.2 — 2026-11-23
+## 0.2.2 — 2026-11-25
 
-本版为 0.2.1 的修复与体验补强，仍兼容 OpenCode 2.3.2 及以上，无数据迁移。
+本版为 0.2.1 的修复与体验补强，目标与验收环境为 OpenCode 2.4.1；2.3.2 的 prompt/code 路径仍兼容（未在 2.3.2 重新实机验收），无数据迁移。
 
 ### 修复
 
@@ -15,12 +15,15 @@
 
 - 绑定会话选择器改用官方 `session.list` 的服务端 `search` 与游标分页，支持 250ms 防抖搜索和“加载更多”，较早的会话不再因固定 100 条上限而不可达。
 - 新建会话写入 `opencode-schedule-center.mount` 元数据，作为承载会话归属的可靠标记。
+- 适配 OpenCode 2.4.1 新增的 `shell` 动作：列表、详情、搜索和复制正确展示 Shell 命令，不再出现 `[代码] undefined`；未来未知动作也有可读兜底。
+- 依赖升级到 `@opencode/client` / `@opencode/plugin` 2.4.1，`effect` 对齐 4.1.0。
 - 移除页面内重复注入的样式，统一由 `installStyles()` 注入。
 - 清理旧 Schedule API 遗留的 `checked` 结果文案；结束时间错误提示区分“无效 / 已过去 / 早于首次触发”。
 
 ### 文档
 
 - 修正 README 中已不存在的“可选时区”和缺失的模型变体说明。
+- 更新 2.4.1 配置说明：顶层 `automations` 默认开启，`false` 关闭；MCP Events 已内置。补充 2.3.2 与 2.4.x 的版本差异、三种动作类型与 Shell 只读限制。
 - 将 0.1.x 时期的 `docs/README.md` 与 `docs/OFFICIAL-API-COVERAGE.md` 标注为历史归档。
 
 ---
