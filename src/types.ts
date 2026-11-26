@@ -58,6 +58,8 @@ export interface SessionInfo {
   projectID?: string
   location?: { directory?: string }
   time?: { created?: number; updated?: number }
+  /** Session metadata; the plugin writes MOUNT_SESSION_MARKER on its own mount sessions. */
+  metadata?: Record<string, unknown>
   /** The model the session wakes with; set in the create form's advanced options. */
   model?: SessionModelRef
   /** The primary agent the session runs as. */

@@ -2,22 +2,67 @@ import type { AutomationAction } from "@opencode/client/promise"
 import type { ScheduleInfo, ScheduleWhen, WhenDraft } from "../types"
 
 /**
- * Search/title text for an official action. A code action is labelled as code
- * and is NEVER presented as a prompt — this keeps code content out of every
- * "prompt" surface and out of copy-to-clipboard-as-prompt paths.
+ * A UI view of an official action. Normalising here keeps prompt, code, shell
+ * and any future action variant out of the detail panel as `undefined`, and
+ * keeps code/shell content out of every "prompt" surface.
  */
+export interface ActionDescription {
+  kind: "prompt" | "code" | "shell" | "unknown"
+  label: string
+  /** Raw content shown in the detail panel and copied to the clipboard. */
+  body: string
+  /** Search/title text; labels code and shell so they are never read as prompts. */
+  text: string
+  /** Serialized code args, only for code actions. */
+  args?: string
+}
+
+export function describeAction(action: AutomationAction): ActionDescription {
+  switch (action.type) {
+    case "prompt":
+      return { kind: "prompt", label: "提示词", body: action.prompt, text: action.prompt }
+    case "code":
+      return {
+        kind: "code",
+        label: "代码",
+        body: action.code,
+        text: `[代码] ${action.code}`,
+        ...(action.args !== undefined ? { args: JSON.stringify(action.args) } : {}),
+      }
+    case "shell":
+      return {
+        kind: "shell",
+        label: "Shell 命令",
+        body: action.command,
+        text: `[Shell] ${action.command}`,
+      }
+    default: {
+      // A future official action variant must still render something legible
+      // instead of `undefined`; the detail panel is read-only for unknown kinds.
+      const type = (action as { type?: string }).type ?? "unknown"
+      return { kind: "unknown", label: "未知动作", body: "", text: `[未知动作] ${type}` }
+    }
+  }
+}
+
+/** Search/title text for an official action. */
 export function actionText(action: AutomationAction): string {
-  return action.type === "prompt" ? action.prompt : `[代码] ${action.code}`
+  return describeAction(action).text
 }
 
-/** Detail-panel label for an action: "提示词" or "代码". */
+/** Detail-panel label for an action. */
 export function actionLabel(action: AutomationAction): string {
-  return action.type === "prompt" ? "提示词" : "代码"
+  return describeAction(action).label
 }
 
-/** Serialized args of a code action, or undefined for a prompt action. */
+/** Raw action content for the detail panel and copy button. */
+export function actionBody(action: AutomationAction): string {
+  return describeAction(action).body
+}
+
+/** Serialized args of a code action, or undefined for any other action. */
 export function actionArgsText(action: AutomationAction): string | undefined {
-  return action.type === "code" && action.args !== undefined ? JSON.stringify(action.args) : undefined
+  return describeAction(action).args
 }
 
 /** Parse a duration like "90 seconds", "5 minutes", "2 hours", "3 days" into milliseconds. */
@@ -141,15 +186,27 @@ export function clockText(at: number | undefined): string {
 }
 
 /**
- * Outcome badge text and tone — one entry per official ScheduleOutcome value.
- * `checked` means "condition was checked", NOT "condition unmet"; the latter is
- * `skipped`. Keeping them distinct avoids asserting a failure the API didn't report.
+ * Validate a `datetime-local` end time against the current time and, when the
+ * first trigger is known, the first predicted run. Returns a user-facing hint
+ * or null when the value is acceptable.
+ */
+export function validateEndAt(value: string, now: number, firstTrigger?: number): string | null {
+  const at = Date.parse(value)
+  if (Number.isNaN(at)) return "请选择有效时间"
+  if (at <= now) return "结束时间已过去"
+  if (firstTrigger !== undefined && at <= firstTrigger) return "结束时间需晚于首次触发时间"
+  return null
+}
+
+/**
+ * Outcome badge text and tone — one entry per official AutomationOutcome value.
+ * The legacy `checked` outcome belonged to the removed Schedule API and is no
+ * longer part of the official union.
  */
 export function outcomeLabel(outcome: string | undefined): { text: string; tone: "ok" | "warn" | "bad" } | null {
   if (!outcome) return null
   if (outcome === "fired") return { text: "已触发", tone: "ok" }
   if (outcome === "late") return { text: "延迟触发", tone: "warn" }
-  if (outcome === "checked") return { text: "已检查条件", tone: "warn" }
   if (outcome === "expired") return { text: "已过期", tone: "warn" }
   if (outcome === "skipped") return { text: "已跳过", tone: "warn" }
   if (outcome === "disabled") return { text: "已禁用", tone: "warn" }

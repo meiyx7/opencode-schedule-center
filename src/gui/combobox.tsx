@@ -25,6 +25,15 @@ export function Combobox(props: {
   disabled?: boolean
   /** Open the list as soon as the combobox mounts (used by popover pickers). */
   autoOpen?: boolean
+  /** Options are already filtered by the caller; do not filter them again. */
+  remote?: boolean
+  /** The caller is fetching options; show a loading hint instead of "no matches". */
+  loading?: boolean
+  /** More server pages are available. */
+  hasMore?: boolean
+  /** Fires on each keystroke, including when `remote` is set. */
+  onQueryChange?: (query: string) => void
+  onLoadMore?: () => void
   onSelect: (value: string) => void
 }) {
   const [open, setOpen] = createSignal(false)
@@ -41,6 +50,7 @@ export function Combobox(props: {
     return value.length > 0 && value !== (selected()?.label ?? "").trim().toLowerCase()
   })
   const filtered = createMemo(() => {
+    if (props.remote) return props.options
     if (!filtering()) return props.options
     const value = query()
     return props.options.filter((option) => {
@@ -170,7 +180,7 @@ export function Combobox(props: {
   createEffect(() => {
     const index = active()
     if (!open() || index < 0 || !list) return
-    const node = list.children[index] as HTMLElement | undefined
+    const node = list.querySelectorAll<HTMLElement>(".sc-combo-option")[index]
     node?.scrollIntoView({ block: "nearest" })
   })
 
@@ -202,6 +212,7 @@ export function Combobox(props: {
           setDraft(event.currentTarget.value)
           setOpen(true)
           setActive(0)
+          props.onQueryChange?.(event.currentTarget.value)
         }}
         onKeyDown={onKeyDown}
         onBlur={() => {
@@ -227,11 +238,19 @@ export function Combobox(props: {
       </Show>
       <Show when={open()}>
         <div class="sc-combo-list" role="listbox" ref={list}>
+          <Show when={!props.loading || filtered().length > 0}>
+            <div class="sc-combo-count">
+              {props.loading ? "搜索中…" : props.remote ? `已加载 ${filtered().length} 项` : `${filtered().length} 项`}
+            </div>
+          </Show>
           <Show
             when={filtered().length > 0}
-            fallback={<div class="sc-combo-empty">{props.emptyText ?? "没有匹配项"}</div>}
+            fallback={
+              <div class="sc-combo-empty">
+                {props.loading ? "正在搜索…" : props.emptyText ?? "没有匹配项"}
+              </div>
+            }
           >
-            <div class="sc-combo-count">{filtered().length} 项</div>
             <For each={filtered()}>
               {(option, index) => (
                 <button
@@ -259,6 +278,17 @@ export function Combobox(props: {
                 </button>
               )}
             </For>
+          </Show>
+          <Show when={props.hasMore}>
+            <button
+              type="button"
+              class="sc-combo-more"
+              disabled={props.loading}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => props.onLoadMore?.()}
+            >
+              {props.loading ? "加载中…" : "加载更多"}
+            </button>
           </Show>
         </div>
       </Show>
