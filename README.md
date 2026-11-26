@@ -2,7 +2,7 @@
 
 OpenCode Desktop 的 GUI 插件：可视化查看、创建、暂停、恢复和删除 OpenCode 的定时任务（Automation）。
 
-> **版本提示**：本插件从 **0.2.0** 起接入官方 **Automation API**；**0.2.2** 的目标与验收环境为 OpenCode **2.4.1**。2.4.1 的 Automation 已是一等功能，动作类型新增 `shell`；本版会正确展示 Shell 命令，但新建任务仍只支持提示词。请按下方[版本兼容](#版本兼容必读)选择插件版本；升级前请阅读[数据迁移说明](#数据迁移说明必读)。
+> **版本提示**：本插件从 **0.2.0** 起接入官方 **Automation API**；**0.2.2** 的目标与验收环境为 OpenCode **2.4.2**。2.4.x 的 Automation 已是一等功能，并新增 `shell` 动作；本版会正确展示 Shell 命令，但新建任务仍只支持提示词。请按下方[版本兼容](#版本兼容必读)选择插件版本；升级前请阅读[数据迁移说明](#数据迁移说明必读)。
 
 ## 版本兼容（必读）
 
@@ -10,12 +10,12 @@ OpenCode 在 **2.3.2** 删除了旧的 `/api/experimental/schedule`，改为 `/a
 
 | 你的 OpenCode 版本 | 应使用的插件版本 | 说明 |
 |---|---|---|
-| **2.4.1** | **0.2.2**（本版，按 2.4.1 验收） | 支持 prompt / code / shell 展示；新建仍只支持 prompt |
-| 2.3.2 | 0.2.1，或 0.2.2（仅 prompt/code 路径，未在 2.3.2 重新实机验收） | 2.3.2 不会产生 shell 动作 |
+| **2.4.2** | **0.2.2**（本版，按 2.4.2 验收） | 支持 prompt / code / shell 展示；新建仍只支持 prompt |
+| 2.3.2 | 0.2.1（推荐）；0.2.2 未在 2.3.2 实机验收 | 2.3.2 不会产生 shell 动作 |
 | 2.3.2 之前（如 2.2.5） | **0.1.x**（旧版，请锁定版本安装） | 旧 `experimental.schedule` |
 
-- 这里的“OpenCode 版本”指你实际运行的 **Desktop CLI / `@opencode/*` 包版本**（如 `2.4.1`），不是 GitHub Release 的 tag。可在 OpenCode 的“关于”或 CLI 版本信息中查看。
-- **0.2.2 使用 `@opencode/client` / `@opencode/plugin` 2.4.1 构建**；运行时只使用 2.3.2 已有的宿主 API，因此 2.3.2 的 prompt/code 路径仍应兼容，但本版未在 2.3.2 重新做 Desktop 实机验收。
+- 这里的“OpenCode 版本”指你实际运行的 **Desktop CLI / `@opencode/*` 包版本**（如 `2.4.2`），不是 GitHub Release 的 tag。可在 OpenCode 的“关于”或 CLI 版本信息中查看。
+- **0.2.2 使用 `@opencode/client` / `@opencode/plugin` 2.4.2 构建**；代码只调用 2.3.2 已存在的宿主 API，但本版未在 2.3.2 重新做 Desktop 实机验收，2.3.2 用户建议继续使用 0.2.1。
 - **如果你是 2.3.2 之前的老版本，请继续用 0.1.x，不要升级到本版**；2.3.2 仍使用 0.2.x，不能回退到 0.1.x。
 
 ## 数据迁移说明（必读）
@@ -49,8 +49,8 @@ OpenCode 在 **2.3.2** 删除了旧的 `/api/experimental/schedule`，改为 `/a
 
 ## 前置条件
 
-1. **OpenCode Desktop 2.4.1**（本版验收环境；GUI 插件 API 为桌面端专属）。2.3.2 的 prompt/code 路径仍可用，但本版未在 2.3.2 重新实机验收。
-2. Automation 在 2.4.1 默认开启，无需额外开关。如需关闭，在全局配置 `~/.config/opencode/opencode.json` 中设置：
+1. **OpenCode Desktop 2.4.2**（本版验收环境；GUI 插件 API 为桌面端专属）。2.3.2 的 prompt/code 路径仍可用，但本版未在 2.3.2 重新实机验收。
+2. Automation 在 2.4.2 默认开启，无需额外开关。如需关闭，在全局配置 `~/.config/opencode/opencode.json` 中设置：
 
 ```jsonc
 {
@@ -93,7 +93,7 @@ CI 会校验 tag 与 `package.json` 版本一致、且 tag 指向已合并进 `m
 
 ## 实现说明
 
-- **官方 API**：底层为 `client.experimental.automation.{list,create,get,pause,resume,delete}`（`@opencode/client` 2.4.1，Experimental）。类型直接复用官方 `AutomationInfo` / `AutomationAction` 等，不做本地镜像；代码与 Shell 动作原样保留，不降级为提示词。
+- **官方 API**：底层为 `client.experimental.automation.{list,create,get,pause,resume,delete}`（`@opencode/client` 2.4.2，Experimental）。类型直接复用官方 `AutomationInfo` / `AutomationAction` 等，不做本地镜像；代码与 Shell 动作原样保留，不降级为提示词。
 - **动作展示**：`describeAction` 把 prompt / code / shell / 未来未知类型统一归一化；Shell 显示原始命令，代码保留参数，未知类型也有可读兜底，任何情况下都不渲染 `undefined`。
 - **职责边界**：官方负责调度、执行与持久化；插件不内置调度器、不自算触发时间、不维护本地任务库、不伪造执行历史，也不承担任何数据迁移职责。
 - **数据读取**：`automation.list()` 零参数即可枚举全部可见任务；会话（session）只用于补充展示模型 / Agent / 执行目录等元数据。

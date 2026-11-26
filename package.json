@@ -31,8 +31,8 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@opencode/client": "2.4.1",
-    "@opencode/plugin": "2.4.1"
+    "@opencode/client": "2.4.2",
+    "@opencode/plugin": "2.4.2"
   },
   "peerDependencies": {
     "effect": "^4.1.0"
